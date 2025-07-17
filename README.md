@@ -1,7 +1,5 @@
 # GDNT Extractor System
 
-Run the system here --> https://gdntextractor.streamlit.app/
-
 # Installation
 
 1. Clone this repository
@@ -17,14 +15,12 @@ Run the system here --> https://gdntextractor.streamlit.app/
 `.venv\Scripts\activate`
 
 You should see this:
-`(.venv) C:\Users\User\Documents\MastersDegreeProject\GDNT> ...`
+`(.venv) C:\Users\User\Documents\MastersDegreeProject\Try> ...`
 
 4. Install all required packages in `requirements.txt`
 
 `pip install -r requirements.txt`
 
-5. Run streamlit server
-
-`streamlit run main.py`
+5. Run the code in VSCode to open the interface
 
 6. Settle!
