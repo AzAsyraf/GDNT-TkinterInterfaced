@@ -567,7 +567,7 @@ def create_interface():
         title_label.configure(bg=bg_color, fg=fg_color)
         filename_label.configure(
             bg=bg_color, fg="#bbbbbb" if dark_mode else "black")
-        output_text.configure(bg="#1e1e1e" if dark_mode else "white",
+        output_table.configure(bg="#1e1e1e" if dark_mode else "white",
                               fg="#f0f0f0" if dark_mode else "#333333",
                               insertbackground="white" if dark_mode else "black")
         theme_button.configure(
@@ -705,3 +705,4 @@ def create_interface():
 
 
 create_interface()
+
