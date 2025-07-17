@@ -702,6 +702,5 @@ def create_interface():
 
     root.mainloop()
 
-
 create_interface()
 
