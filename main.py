@@ -587,7 +587,7 @@ def create_interface():
     logo_frame = tk.Frame(top_frame, bg="#ffffff", borderwidth=1, relief="solid")
     logo_frame.grid(row=0, column=0, sticky="w", padx=10)
     try:
-        logo_img = Image.open("./assets/unisza.png").resize((100, 100))
+        logo_img = Image.open("./assets/unisza1.png").resize((100, 100))
         logo_photo = ImageTk.PhotoImage(logo_img)
         tk.Label(logo_frame, image=logo_photo, bg="#ffffff").pack()
     except:
