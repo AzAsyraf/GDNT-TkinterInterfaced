@@ -6,7 +6,7 @@ Run the system here --> https://gdntextractor.streamlit.app/
 
 1. Clone this repository
 
-`git clone https://github.com/AzAsyraf/GDNT-Try.git .`
+`git clone https://github.com/AzAsyraf/GDNT-try.git .`
 
 2. Create a virtual environment
 
