@@ -156,10 +156,10 @@ def create_interface():
                 return "top face"
             elif "plane2" in fname or "bottom" in fname:
                 return "bottom face"
+            elif "cone" in fname or "conical" in fname:
+                return "conical side of the part"
             elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
                 return "cylindrical side"
-            elif "cone" in fname or "conical" in fname:
-                return "conical side"
             else:
                 return feature_name
 
@@ -170,10 +170,10 @@ def create_interface():
                 return "top face (facing +Z)"
             elif "plane2" in fname or "bottom" in fname:
                 return "bottom face (facing -Z)"
+            elif "cone" in fname or "conical" in fname:
+                return "conical side of the part"
             elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
                 return "curved side of the cylinder"
-            elif "cone" in fname or "conical" in fname:
-                return "conical side"
             elif "face" in fname:
                 return "planar face"
             else:
@@ -386,10 +386,10 @@ def create_interface():
                 return "top face"
             elif "plane2" in fname or "bottom" in fname:
                 return "bottom face"
+            elif "cone" in fname or "conical" in fname:
+                return "conical side of the part"
             elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
                 return "cylindrical side"
-            elif "cone" in fname or "conical" in fname:
-                return "conical side"
             else:
                 return feature_name
 
@@ -400,10 +400,10 @@ def create_interface():
                 return "top face (facing +Z)"
             elif "plane2" in fname or "bottom" in fname:
                 return "bottom face (facing -Z)"
+            elif "cone" in fname or "conical" in fname:
+                return "conical side of the part"
             elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
                 return "curved side of the cylinder"
-            elif "cone" in fname or "conical" in fname:
-                return "conical side"
             elif "face" in fname:
                 return "planar face"
             else:
@@ -584,9 +584,8 @@ def create_interface():
 
     top_frame = tk.Frame(root, bg="#eef3f7")
     top_frame.pack(fill=tk.X, padx=20, pady=10)
-    logo_frame = tk.Frame(top_frame, bg="#ffffff",
-                          borderwidth=1, relief="solid")
-    logo_frame.grid(row=0, column=0, sticky="e", padx=10)
+    logo_frame = tk.Frame(top_frame, bg="#ffffff", borderwidth=1, relief="solid")
+    logo_frame.grid(row=0, column=0, sticky="w", padx=10)
     try:
         logo_img = Image.open("./assets/unisza.png").resize((100, 100))
         logo_photo = ImageTk.PhotoImage(logo_img)
@@ -599,7 +598,7 @@ def create_interface():
     title_label.grid(row=0, column=1, padx=10, pady=10)
 
     right_logo_frame = tk.Frame(top_frame, bg="#ffffff", borderwidth=1, relief="solid")
-    right_logo_frame.grid(row=0, column=2, sticky="w", padx=10)
+    right_logo_frame.grid(row=0, column=2, sticky="e", padx=10)
     try:
         right_img = Image.open("./assets/frit.png").resize((100, 100))
         right_photo = ImageTk.PhotoImage(right_img)
