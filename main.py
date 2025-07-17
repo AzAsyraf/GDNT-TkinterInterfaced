@@ -6,6 +6,8 @@ import os
 from tkinter import ttk
 
 # Main interface creation and event handling
+
+
 def create_interface():
     # Handles file upload and processing
     def upload_and_process():
@@ -14,7 +16,8 @@ def create_interface():
                        ("All files", "*.*")]
         )
         if file_path:
-            filename_label.config(text=f"📁 File loaded: {os.path.basename(file_path)}")
+            filename_label.config(
+                text=f"📁 File loaded: {os.path.basename(file_path)}")
             try:
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
                     content = file.read()
@@ -22,7 +25,8 @@ def create_interface():
                     result_lines = extract_tolerance_table(content)
                     show_table(result_lines)
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to read file:\n{str(e)}")
+                messagebox.showerror(
+                    "Error", f"Failed to read file:\n{str(e)}")
 
     # Extracts tolerance values and datums from STEP/text file
     def extract_tolerance_values(text):
@@ -55,18 +59,21 @@ def create_interface():
         # Find all DATUM and SHAPE_ASPECT lines
         for line in lines:
             # Parse DATUM entity
-            m = re.match(r"#\d+=DATUM\('([^']*)',\$,#\d+,\.F\.,'([A-Z])'\);", line)
+            m = re.match(
+                r"#\d+=DATUM\('([^']*)',\$,#\d+,\.F\.,'([A-Z])'\);", line)
             if m:
                 feature, letter = m.groups()
                 # Find corresponding SHAPE_ASPECT for this feature
                 for sa_line in lines:
-                    sa_m = re.match(r"#(\d+)=SHAPE_ASPECT\('([^']*)','',#\d+,\.T\.\);", sa_line)
+                    sa_m = re.match(
+                        r"#(\d+)=SHAPE_ASPECT\('([^']*)','',#\d+,\.T\.\);", sa_line)
                     if sa_m and feature in sa_m.group(2):
                         faceid = sa_m.group(1)
                         datum_letter_to_faceid[letter] = faceid
                         faceid_to_name[faceid] = feature
             # Parse SHAPE_ASPECT entity
-            sa_m = re.match(r"#(\d+)=SHAPE_ASPECT\('([^']*)','',#\d+,\.T\.\);", line)
+            sa_m = re.match(
+                r"#(\d+)=SHAPE_ASPECT\('([^']*)','',#\d+,\.T\.\);", line)
             if sa_m:
                 faceid, feature = sa_m.groups()
                 faceid_to_name[faceid] = feature
@@ -112,7 +119,8 @@ def create_interface():
             for letter, faceid in datum_letter_to_faceid.items():
                 if faceid == datum_ref_id:
                     datum_letter = letter
-                    location = faceid_to_name.get(faceid, face_to_plane.get(faceid, ""))
+                    location = faceid_to_name.get(
+                        faceid, face_to_plane.get(faceid, ""))
                     break
             if not datum_letter:
                 # Fallback to previous logic if not found
@@ -123,7 +131,8 @@ def create_interface():
                         break
                 if datum_letter and datum_letter in datum_letter_to_faceid:
                     faceid = datum_letter_to_faceid[datum_letter]
-                    location = faceid_to_name.get(faceid, face_to_plane.get(faceid, ""))
+                    location = faceid_to_name.get(
+                        faceid, face_to_plane.get(faceid, ""))
                 else:
                     for key, val in face_to_plane.items():
                         if key in ref_id or key in tol_name:
@@ -149,6 +158,8 @@ def create_interface():
                 return "bottom face"
             elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
                 return "cylindrical side"
+            elif "cone" in fname or "conical" in fname:
+                return "conical side"
             else:
                 return feature_name
 
@@ -161,6 +172,8 @@ def create_interface():
                 return "bottom face (facing -Z)"
             elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
                 return "curved side of the cylinder"
+            elif "cone" in fname or "conical" in fname:
+                return "conical side"
             elif "face" in fname:
                 return "planar face"
             else:
@@ -172,13 +185,15 @@ def create_interface():
         plane_map = {}      # Maps PLANE IDs to AXIS2_PLACEMENT_3D IDs
         for line in lines:
             # Parse DIRECTION entity
-            dir_match = re.match(r"#(\d+)=DIRECTION\('[^']*',\(([^)]*)\)\);", line)
+            dir_match = re.match(
+                r"#(\d+)=DIRECTION\('[^']*',\(([^)]*)\)\);", line)
             if dir_match:
                 dir_id, vec = dir_match.groups()
                 vec = tuple(float(x) for x in vec.split(","))
                 direction_map[dir_id] = vec
             # Parse AXIS2_PLACEMENT_3D entity
-            axis_match = re.match(r"#(\d+)=AXIS2_PLACEMENT_3D\('[^']*',#(\d+),#(\d+),#(\d+)\);", line)
+            axis_match = re.match(
+                r"#(\d+)=AXIS2_PLACEMENT_3D\('[^']*',#(\d+),#(\d+),#(\d+)\);", line)
             if axis_match:
                 axis_id, pt_id, dir1_id, dir2_id = axis_match.groups()
                 axis_map[axis_id] = (dir1_id, dir2_id)
@@ -202,8 +217,9 @@ def create_interface():
                 return "unknown axis"
             # Find closest axis
             axis_labels = ["X", "Y", "Z"]
-            axis_vectors = [(1,0,0), (0,1,0), (0,0,1)]
-            dot_products = [abs(sum(a*b for a,b in zip(dir_vec, axis))) for axis in axis_vectors]
+            axis_vectors = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
+            dot_products = [abs(sum(a*b for a, b in zip(dir_vec, axis)))
+                            for axis in axis_vectors]
             max_idx = dot_products.index(max(dot_products))
             sign = '+' if dir_vec[max_idx] >= 0 else '-'
             return f"facing {sign}{axis_labels[max_idx]}"
@@ -273,18 +289,21 @@ def create_interface():
         # Find all DATUM and SHAPE_ASPECT lines
         for line in lines:
             # Parse DATUM entity
-            m = re.match(r"#\d+=DATUM\('([^']*)',\$,#\d+,\.F\.,'([A-Z])'\);", line)
+            m = re.match(
+                r"#\d+=DATUM\('([^']*)',\$,#\d+,\.F\.,'([A-Z])'\);", line)
             if m:
                 feature, letter = m.groups()
                 # Find corresponding SHAPE_ASPECT for this feature
                 for sa_line in lines:
-                    sa_m = re.match(r"#(\d+)=SHAPE_ASPECT\('([^']*)','',#\d+,\.T\.\);", sa_line)
+                    sa_m = re.match(
+                        r"#(\d+)=SHAPE_ASPECT\('([^']*)','',#\d+,\.T\.\);", sa_line)
                     if sa_m and feature in sa_m.group(2):
                         faceid = sa_m.group(1)
                         datum_letter_to_faceid[letter] = faceid
                         faceid_to_name[faceid] = feature
             # Parse SHAPE_ASPECT entity
-            sa_m = re.match(r"#(\d+)=SHAPE_ASPECT\('([^']*)','',#\d+,\.T\.\);", line)
+            sa_m = re.match(
+                r"#(\d+)=SHAPE_ASPECT\('([^']*)','',#\d+,\.T\.\);", line)
             if sa_m:
                 faceid, feature = sa_m.groups()
                 faceid_to_name[faceid] = feature
@@ -330,7 +349,8 @@ def create_interface():
             for letter, faceid in datum_letter_to_faceid.items():
                 if faceid == datum_ref_id:
                     datum_letter = letter
-                    location = faceid_to_name.get(faceid, face_to_plane.get(faceid, ""))
+                    location = faceid_to_name.get(
+                        faceid, face_to_plane.get(faceid, ""))
                     break
             if not datum_letter:
                 # Fallback to previous logic if not found
@@ -341,7 +361,8 @@ def create_interface():
                         break
                 if datum_letter and datum_letter in datum_letter_to_faceid:
                     faceid = datum_letter_to_faceid[datum_letter]
-                    location = faceid_to_name.get(faceid, face_to_plane.get(faceid, ""))
+                    location = faceid_to_name.get(
+                        faceid, face_to_plane.get(faceid, ""))
                 else:
                     for key, val in face_to_plane.items():
                         if key in ref_id or key in tol_name:
@@ -367,6 +388,8 @@ def create_interface():
                 return "bottom face"
             elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
                 return "cylindrical side"
+            elif "cone" in fname or "conical" in fname:
+                return "conical side"
             else:
                 return feature_name
 
@@ -379,6 +402,8 @@ def create_interface():
                 return "bottom face (facing -Z)"
             elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
                 return "curved side of the cylinder"
+            elif "cone" in fname or "conical" in fname:
+                return "conical side"
             elif "face" in fname:
                 return "planar face"
             else:
@@ -390,13 +415,15 @@ def create_interface():
         plane_map = {}      # Maps PLANE IDs to AXIS2_PLACEMENT_3D IDs
         for line in lines:
             # Parse DIRECTION entity
-            dir_match = re.match(r"#(\d+)=DIRECTION\('[^']*',\(([^)]*)\)\);", line)
+            dir_match = re.match(
+                r"#(\d+)=DIRECTION\('[^']*',\(([^)]*)\)\);", line)
             if dir_match:
                 dir_id, vec = dir_match.groups()
                 vec = tuple(float(x) for x in vec.split(","))
                 direction_map[dir_id] = vec
             # Parse AXIS2_PLACEMENT_3D entity
-            axis_match = re.match(r"#(\d+)=AXIS2_PLACEMENT_3D\('[^']*',#(\d+),#(\d+),#(\d+)\);", line)
+            axis_match = re.match(
+                r"#(\d+)=AXIS2_PLACEMENT_3D\('[^']*',#(\d+),#(\d+),#(\d+)\);", line)
             if axis_match:
                 axis_id, pt_id, dir1_id, dir2_id = axis_match.groups()
                 axis_map[axis_id] = (dir1_id, dir2_id)
@@ -418,8 +445,9 @@ def create_interface():
             if not dir_vec:
                 return "unknown axis"
             axis_labels = ["X", "Y", "Z"]
-            axis_vectors = [(1,0,0), (0,1,0), (0,0,1)]
-            dot_products = [abs(sum(a*b for a,b in zip(dir_vec, axis))) for axis in axis_vectors]
+            axis_vectors = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
+            dot_products = [abs(sum(a*b for a, b in zip(dir_vec, axis)))
+                            for axis in axis_vectors]
             max_idx = dot_products.index(max(dot_products))
             sign = '+' if dir_vec[max_idx] >= 0 else '-'
             return f"facing {sign}{axis_labels[max_idx]}"
@@ -438,7 +466,8 @@ def create_interface():
                     break
             if axis_info and axis_info != "unknown axis":
                 surface = f"{location_str} ({axis_info})"
-            table_rows.append((type_with_symbol, value, datum, location_str, surface))
+            table_rows.append(
+                (type_with_symbol, value, datum, location_str, surface))
         for d_letter in datum_letter_to_faceid:
             faceid = datum_letter_to_faceid[d_letter]
             feature_name = faceid_to_name.get(faceid, "")
@@ -451,7 +480,8 @@ def create_interface():
                     break
             if axis_info and axis_info != "unknown axis":
                 surface = f"{location_str} ({axis_info})"
-            table_rows.append(("Datum", d_letter, d_letter, location_str, surface))
+            table_rows.append(
+                ("Datum", d_letter, d_letter, location_str, surface))
         return table_rows
 
     # Displays the results in a ttk.Treeview table
@@ -461,7 +491,8 @@ def create_interface():
         if output_table:
             output_table.destroy()
         columns = ("Type", "Value", "Datum", "Location", "Surface")
-        output_table = ttk.Treeview(root, columns=columns, show="headings", height=20)
+        output_table = ttk.Treeview(
+            root, columns=columns, show="headings", height=20)
         for col in columns:
             output_table.heading(col, text=col)
             output_table.column(col, anchor="center", width=150)
@@ -476,7 +507,8 @@ def create_interface():
     # Handles saving results to file
     def save_results():
         global output_table
-        rows = [output_table.item(row)['values'] for row in output_table.get_children()]
+        rows = [output_table.item(row)['values']
+                for row in output_table.get_children()]
         if not rows:
             messagebox.showwarning("Warning", "Nothing to save.")
             return
@@ -510,7 +542,8 @@ def create_interface():
                 for row in rows:
                     ws.append(row)
                 wb.save(file_path)
-            messagebox.showinfo("Saved", f"Results saved as {file_format.upper()}!")
+            messagebox.showinfo(
+                "Saved", f"Results saved as {file_format.upper()}!")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save file:\n{str(e)}")
 
@@ -532,7 +565,8 @@ def create_interface():
         top_frame.configure(bg=bg_color)
         mid_frame.configure(bg=bg_color)
         title_label.configure(bg=bg_color, fg=fg_color)
-        filename_label.configure(bg=bg_color, fg="#bbbbbb" if dark_mode else "black")
+        filename_label.configure(
+            bg=bg_color, fg="#bbbbbb" if dark_mode else "black")
         output_text.configure(bg="#1e1e1e" if dark_mode else "white",
                               fg="#f0f0f0" if dark_mode else "#333333",
                               insertbackground="white" if dark_mode else "black")
@@ -550,29 +584,28 @@ def create_interface():
 
     top_frame = tk.Frame(root, bg="#eef3f7")
     top_frame.pack(fill=tk.X, padx=20, pady=10)
-    top_frame.grid_columnconfigure(0, weight=1)
-    top_frame.grid_columnconfigure(1, weight=3)
-    top_frame.grid_columnconfigure(2, weight=1)
-
-    logo_frame = tk.Frame(top_frame, bg="#ffffff", borderwidth=1, relief="solid")
-    logo_frame.grid(row=0, column=0, sticky="w", padx=10)
+    logo_frame = tk.Frame(top_frame, bg="#ffffff",
+                          borderwidth=1, relief="solid")
+    logo_frame.grid(row=0, column=0, sticky="e", padx=10)
     try:
-        logo_img = Image.open("./assets/unisza.png").resize((150, 150))
+        logo_img = Image.open("./assets/unisza.png").resize((100, 100))
         logo_photo = ImageTk.PhotoImage(logo_img)
         tk.Label(logo_frame, image=logo_photo, bg="#ffffff").pack()
-    except: pass
+    except:
+        pass
 
     title_label = tk.Label(top_frame, text="GD&T Tolerance Value Extractor",
-                            font=("Helvetica", 20, "bold"), bg="#eef3f7", fg="#003366")
+                           font=("Helvetica", 20, "bold"), bg="#eef3f7", fg="#003366")
     title_label.grid(row=0, column=1, padx=10, pady=10)
 
     right_logo_frame = tk.Frame(top_frame, bg="#ffffff", borderwidth=1, relief="solid")
-    right_logo_frame.grid(row=0, column=2, sticky="e", padx=10)
+    right_logo_frame.grid(row=0, column=2, sticky="w", padx=10)
     try:
-        right_img = Image.open("./assets/frit.png").resize((150, 150))
+        right_img = Image.open("./assets/frit.png").resize((100, 100))
         right_photo = ImageTk.PhotoImage(right_img)
         tk.Label(right_logo_frame, image=right_photo, bg="#ffffff").pack()
-    except: pass
+    except:
+        pass
 
     mid_frame = tk.Frame(root, bg="#eef3f7")
     mid_frame.pack(pady=5)
@@ -591,15 +624,18 @@ def create_interface():
     theme_button.grid(row=0, column=3, padx=5)
 
     format_var = tk.StringVar(value=".txt")
-    tk.OptionMenu(mid_frame, format_var, ".txt", ".csv", ".xlsx").grid(row=0, column=4, padx=5)
+    tk.OptionMenu(mid_frame, format_var, ".txt", ".csv",
+                  ".xlsx").grid(row=0, column=4, padx=5)
 
-    filename_label = tk.Label(root, text="", font=("Arial", 10), bg="#eef3f7", fg="black")
+    filename_label = tk.Label(root, text="", font=(
+        "Arial", 10), bg="#eef3f7", fg="black")
     filename_label.pack(pady=(5, 0))
 
     # Create empty table on startup
     global output_table
     columns = ("Type", "Value", "Datum", "Location", "Surface")
-    output_table = ttk.Treeview(root, columns=columns, show="headings", height=20)
+    output_table = ttk.Treeview(
+        root, columns=columns, show="headings", height=20)
     for col in columns:
         output_table.heading(col, text=col)
         output_table.column(col, anchor="center", width=150)
@@ -631,7 +667,8 @@ def create_interface():
             pid, aid = plane_match.groups()
             plane_id_to_axis[pid] = aid
         # Parse AXIS2_PLACEMENT_3D entity
-        axis_match = re.match(r"#(\d+)=AXIS2_PLACEMENT_3D\('[^']*',#(\d+),#(\d+),#(\d+)\);", line)
+        axis_match = re.match(
+            r"#(\d+)=AXIS2_PLACEMENT_3D\('[^']*',#(\d+),#(\d+),#(\d+)\);", line)
         if axis_match:
             aid, ptid, dir1id, dir2id = axis_match.groups()
             axis_id_to_dir[aid] = (dir1id, dir2id)
@@ -642,6 +679,7 @@ def create_interface():
             vec = tuple(float(x) for x in vec.split(","))
             dir_id_to_vec[did] = vec
     # Helper to get axis orientation from plane_id
+
     def get_axis_orientation(plane_id):
         axis_id = plane_id_to_axis.get(plane_id)
         if not axis_id:
@@ -653,8 +691,9 @@ def create_interface():
         if not dir_vec:
             return "unknown axis"
         axis_labels = ["X", "Y", "Z"]
-        axis_vectors = [(1,0,0), (0,1,0), (0,0,1)]
-        dot_products = [abs(sum(a*b for a,b in zip(dir_vec, axis))) for axis in axis_vectors]
+        axis_vectors = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
+        dot_products = [abs(sum(a*b for a, b in zip(dir_vec, axis)))
+                        for axis in axis_vectors]
         max_idx = dot_products.index(max(dot_products))
         sign = '+' if dir_vec[max_idx] >= 0 else '-'
         return f"facing {sign}{axis_labels[max_idx]}"
@@ -663,5 +702,6 @@ def create_interface():
     datum_b_orientation = get_axis_orientation('231')
 
     root.mainloop()
+
 
 create_interface()
