@@ -149,35 +149,70 @@ def create_interface():
             "Cylindricity": "⌀"
         }
 
+        # Helper to clean and parse feature names
+        def clean_feature_name(feature_name):
+            if not feature_name:
+                return ""
+            # Remove common STEP file artifacts and extract meaningful parts
+            fname = str(feature_name).lower()
+            # Remove datum references like "datum10@" or similar patterns
+            fname = re.sub(r'datum\d+@', '', fname)
+            # Extract geometric feature types
+            if "torus" in fname:
+                return "torus"
+            elif "plane" in fname:
+                return "plane"
+            elif "boss" in fname:
+                return "boss"
+            elif "cylinder" in fname:
+                return "cylinder"
+            elif "cone" in fname:
+                return "cone"
+            else:
+                # Keep original if no pattern matches
+                return feature_name
+
         # Helper to map feature name to surface type (for Location column)
         def get_surface_type(feature_name):
-            fname = feature_name.lower()
-            if "plane1" in fname or "top" in fname:
+            cleaned_name = clean_feature_name(feature_name)
+            fname = cleaned_name.lower()
+            
+            if "plane1" in fname or "top" in fname or ("plane" in fname and "1" in str(feature_name)):
                 return "top face"
-            elif "plane2" in fname or "bottom" in fname:
+            elif "plane2" in fname or "bottom" in fname or ("plane" in fname and "2" in str(feature_name)):
                 return "bottom face"
             elif "cone" in fname or "conical" in fname:
                 return "conical side of the part"
-            elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
+            elif "boss" in fname or "cylindrical" in fname or "side" in fname or "cylinder" in fname:
                 return "cylindrical side"
+            elif "torus" in fname:
+                return "torus surface"
+            elif "plane" in fname:
+                return "planar surface"
             else:
-                return feature_name
+                return "surface"
 
         # Helper to map feature name and type to Surface (for Surface column) - WITHOUT axis orientation
         def get_likely_location(label, feature_name):
-            fname = feature_name.lower()
-            if "plane1" in fname or "top" in fname:
+            cleaned_name = clean_feature_name(feature_name)
+            fname = cleaned_name.lower()
+            
+            if "plane1" in fname or "top" in fname or ("plane" in fname and "1" in str(feature_name)):
                 return "top face"
-            elif "plane2" in fname or "bottom" in fname:
+            elif "plane2" in fname or "bottom" in fname or ("plane" in fname and "2" in str(feature_name)):
                 return "bottom face"
             elif "cone" in fname or "conical" in fname:
                 return "conical side of the part"
-            elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
+            elif "boss" in fname or "cylindrical" in fname or "side" in fname or "cylinder" in fname:
                 return "curved side of the cylinder"
+            elif "torus" in fname:
+                return "torus surface"
+            elif "plane" in fname:
+                return "planar face"
             elif "face" in fname:
                 return "planar face"
             else:
-                return feature_name
+                return "surface"
 
         # Build output text for results
         output = f"{'Type':<18}{'Value':<10}{'Datum':<9}{'Location':<18}{'Surface':<25}\n" + "-" * 80 + "\n"
