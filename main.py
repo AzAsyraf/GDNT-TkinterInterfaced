@@ -6,9 +6,71 @@ import os
 from tkinter import ttk
 
 # Main interface creation and event handling
-
-
 def create_interface():
+    # Enhanced function to determine surface position for datum plane detection
+    def determine_plane_position(feature_name, datum_letter=None, plane_data=None):
+        """
+        Enhanced function to determine if a plane datum is on top face or bottom face
+        """
+        if not feature_name:
+            return "surface"
+            
+        fname = str(feature_name).lower()
+        
+        # Direct keyword detection for position
+        if any(keyword in fname for keyword in ["top", "upper", "above"]):
+            return "top face"
+        elif any(keyword in fname for keyword in ["bottom", "lower", "below", "base"]):
+            return "bottom face"
+        
+        # Enhanced datum letter logic - based on common CAD conventions
+        if datum_letter:
+            datum_upper = datum_letter.upper()
+            # In many CAD systems, datum A is often the primary reference (base/bottom)
+            # and subsequent datums (B, C, D, etc.) can be on different surfaces
+            if datum_upper == 'A':
+                # Check if it's explicitly a top surface first
+                if any(keyword in fname for keyword in ["top", "upper"]):
+                    return "top face"
+                else:
+                    return "bottom face"  # A is typically base/bottom
+            elif datum_upper in ['B', 'C']:
+                return "cylindrical side"  # B and C often on cylindrical surfaces
+            elif datum_upper == 'D':
+                # D is often the secondary planar surface (opposite of A)
+                return "top face"
+            elif datum_upper in ['E', 'F', 'G', 'H']:
+                # Additional datums might alternate
+                return "top face" if datum_upper in ['E', 'G'] else "bottom face"
+        
+        # Plane numbering logic (less reliable)
+        elif "plane1" in fname:
+            return "bottom face"  # Often plane1 is the base
+        elif "plane2" in fname:
+            return "top face"   # Often plane2 is the top
+        
+        # Check for numerical patterns that might indicate position
+        plane_numbers = re.findall(r'plane(\d+)', fname)
+        if plane_numbers:
+            plane_num = int(plane_numbers[0])
+            if plane_num == 1:
+                return "bottom face"  # Reversed assumption
+            elif plane_num >= 2:
+                return "top face"
+        
+        # If it contains "plane" but no clear position indicator, try to infer
+        if "plane" in fname:
+            # Check if there are any Z-axis indicators or position clues
+            if any(indicator in fname for indicator in ["+z", "positive", "high"]):
+                return "top face"
+            elif any(indicator in fname for indicator in ["-z", "negative", "low"]):
+                return "bottom face"
+            else:
+                # Default assumption: return as generic plane
+                return "planar surface"
+        
+        return str(feature_name)
+
     # Handles file upload and processing
     def upload_and_process():
         file_path = filedialog.askopenfilename(
@@ -174,43 +236,37 @@ def create_interface():
                 # Keep original if no pattern matches
                 return feature_name
 
-        # Helper to map feature name to surface type (for Location column)
+        # Enhanced helper to map feature name to surface type (for Location column)
         def get_surface_type(feature_name):
             cleaned_name = clean_feature_name(feature_name)
             fname = cleaned_name.lower()
             
             if "torus" in fname:
                 return "torus side"
-            elif "plane1" in fname or "top" in fname or ("plane" in fname and "1" in str(feature_name)):
-                return "top face"
-            elif "plane2" in fname or "bottom" in fname or ("plane" in fname and "2" in str(feature_name)):
-                return "bottom face"
+            elif "plane" in str(feature_name).lower():
+                # Enhanced plane detection using the new function
+                return determine_plane_position(feature_name)
             elif "cone" in fname or "conical" in fname:
                 return "conical side of the part"
             elif "boss" in fname or "cylindrical" in fname or "side" in fname or "cylinder" in fname:
                 return "cylindrical side"
-            elif "plane" in fname:
-                return "planar surface"
             else:
                 return "surface"
 
-        # Helper to map feature name and type to Surface (for Surface column) - WITHOUT axis orientation
+        # Enhanced helper to map feature name and type to Surface (for Surface column)
         def get_likely_location(label, feature_name):
             cleaned_name = clean_feature_name(feature_name)
             fname = cleaned_name.lower()
             
             if "torus" in fname:
                 return "torus side"
-            elif "plane1" in fname or "top" in fname or ("plane" in fname and "1" in str(feature_name)):
-                return "top face"
-            elif "plane2" in fname or "bottom" in fname or ("plane" in fname and "2" in str(feature_name)):
-                return "bottom face"
+            elif "plane" in str(feature_name).lower():
+                # Enhanced plane detection using the new function
+                return determine_plane_position(feature_name)
             elif "cone" in fname or "conical" in fname:
                 return "conical side of the part"
             elif "boss" in fname or "cylindrical" in fname or "side" in fname or "cylinder" in fname:
                 return "curved side of the cylinder"
-            elif "plane" in fname:
-                return "planar face"
             elif "face" in fname:
                 return "planar face"
             else:
@@ -224,7 +280,7 @@ def create_interface():
             location_str = get_surface_type(loc)
             likely_location = get_likely_location(label, loc)
             output += f"{type_with_symbol:<18}{value:<10}{datum:<9}{location_str:<18}{likely_location:<25}\n\n"
-        # Output datums with their mapped locations
+        # Output datums with their mapped locations - Enhanced for better plane detection
         for d_letter in datum_letter_to_faceid:
             faceid = datum_letter_to_faceid[d_letter]
             feature_name = faceid_to_name.get(faceid, "")
@@ -381,7 +437,7 @@ def create_interface():
                 # Keep original if no pattern matches
                 return feature_name
 
-        # Helper to map feature name to surface type (for Location column) - Enhanced for torus
+        # Enhanced helper to map feature name to surface type (for Location column)
         def get_surface_type(feature_name):
             if not feature_name:
                 return "surface"
@@ -395,19 +451,19 @@ def create_interface():
             cleaned_name = clean_feature_name(feature_name)
             if cleaned_name == "torus":
                 return "torus side"
+            
+            # Enhanced plane detection for datums
+            if "plane" in fname:
+                return determine_plane_position(feature_name)
                 
-            if "plane1" in fname or "top" in fname:
-                return "top face"
-            elif "plane2" in fname or "bottom" in fname:
-                return "bottom face"
-            elif "cone" in fname or "conical" in fname:
+            if "cone" in fname or "conical" in fname:
                 return "conical side of the part"
             elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
                 return "cylindrical side"
             else:
                 return str(feature_name)
 
-        # Helper to map feature name and type to Surface (for Surface column) - Enhanced for torus
+        # Enhanced helper to map feature name and type to Surface (for Surface column)
         def get_likely_location(label, feature_name):
             if not feature_name:
                 return "surface"
@@ -421,12 +477,12 @@ def create_interface():
             cleaned_name = clean_feature_name(feature_name)
             if cleaned_name == "torus":
                 return "torus side"
+            
+            # Enhanced plane detection for datums
+            if "plane" in fname:
+                return determine_plane_position(feature_name)
                 
-            if "plane1" in fname or "top" in fname:
-                return "top face"
-            elif "plane2" in fname or "bottom" in fname:
-                return "bottom face"
-            elif "cone" in fname or "conical" in fname:
+            if "cone" in fname or "conical" in fname:
                 return "conical side of the part"
             elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
                 return "curved side of the cylinder"
@@ -442,15 +498,16 @@ def create_interface():
             type_with_symbol = f"{symbol} {label}" if symbol else label
             location_str = get_surface_type(loc)
             surface = get_likely_location(label, loc)
-            # Removed axis orientation logic - no more "(facing +Z)" or "(facing -Z)"
             table_rows.append(
                 (type_with_symbol, value, datum, location_str, surface))
+        
+        # Enhanced datum processing with better plane detection
         for d_letter in datum_letter_to_faceid:
             faceid = datum_letter_to_faceid[d_letter]
             feature_name = faceid_to_name.get(faceid, "")
-            location_str = get_surface_type(feature_name)
-            surface = get_likely_location('Datum', feature_name)
-            # Removed axis orientation logic - no more "(facing +Z)" or "(facing -Z)"
+            # Pass datum letter for better detection
+            location_str = determine_plane_position(feature_name, d_letter) if "plane" in str(feature_name).lower() else get_surface_type(feature_name)
+            surface = determine_plane_position(feature_name, d_letter) if "plane" in str(feature_name).lower() else get_likely_location('Datum', feature_name)
             table_rows.append(
                 ("Datum", d_letter, d_letter, location_str, surface))
         return table_rows
