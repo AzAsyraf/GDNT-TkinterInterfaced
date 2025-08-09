@@ -89,6 +89,8 @@ def create_interface():
                 location = "Plane2"
             elif "boss1" in shape_name:
                 location = "Boss1"
+            elif "torus" in shape_name:
+                location = "torus side"
             elif "top" in shape_name:
                 location = "top face"
             elif "bottom" in shape_name:
@@ -177,7 +179,9 @@ def create_interface():
             cleaned_name = clean_feature_name(feature_name)
             fname = cleaned_name.lower()
             
-            if "plane1" in fname or "top" in fname or ("plane" in fname and "1" in str(feature_name)):
+            if "torus" in fname:
+                return "torus side"
+            elif "plane1" in fname or "top" in fname or ("plane" in fname and "1" in str(feature_name)):
                 return "top face"
             elif "plane2" in fname or "bottom" in fname or ("plane" in fname and "2" in str(feature_name)):
                 return "bottom face"
@@ -185,8 +189,6 @@ def create_interface():
                 return "conical side of the part"
             elif "boss" in fname or "cylindrical" in fname or "side" in fname or "cylinder" in fname:
                 return "cylindrical side"
-            elif "torus" in fname:
-                return "torus surface"
             elif "plane" in fname:
                 return "planar surface"
             else:
@@ -197,7 +199,9 @@ def create_interface():
             cleaned_name = clean_feature_name(feature_name)
             fname = cleaned_name.lower()
             
-            if "plane1" in fname or "top" in fname or ("plane" in fname and "1" in str(feature_name)):
+            if "torus" in fname:
+                return "torus side"
+            elif "plane1" in fname or "top" in fname or ("plane" in fname and "1" in str(feature_name)):
                 return "top face"
             elif "plane2" in fname or "bottom" in fname or ("plane" in fname and "2" in str(feature_name)):
                 return "bottom face"
@@ -205,8 +209,6 @@ def create_interface():
                 return "conical side of the part"
             elif "boss" in fname or "cylindrical" in fname or "side" in fname or "cylinder" in fname:
                 return "curved side of the cylinder"
-            elif "torus" in fname:
-                return "torus surface"
             elif "plane" in fname:
                 return "planar face"
             elif "face" in fname:
@@ -294,6 +296,8 @@ def create_interface():
                 location = "Plane2"
             elif "boss1" in shape_name:
                 location = "Boss1"
+            elif "torus" in shape_name:
+                location = "torus side"
             elif "top" in shape_name:
                 location = "top face"
             elif "bottom" in shape_name:
@@ -354,9 +358,44 @@ def create_interface():
             "Cylindricity": "⌀"
         }
 
-        # Helper to map feature name to surface type (for Location column)
+        # Helper to clean and parse feature names - Enhanced for torus detection
+        def clean_feature_name(feature_name):
+            if not feature_name:
+                return ""
+            # Remove common STEP file artifacts and extract meaningful parts
+            fname = str(feature_name).lower()
+            # Remove datum references like "datum10@" or similar patterns
+            fname = re.sub(r'datum\d+@', '', fname)
+            # Extract geometric feature types
+            if "torus" in fname:
+                return "torus"
+            elif "plane" in fname:
+                return "plane"
+            elif "boss" in fname:
+                return "boss"
+            elif "cylinder" in fname:
+                return "cylinder"
+            elif "cone" in fname:
+                return "cone"
+            else:
+                # Keep original if no pattern matches
+                return feature_name
+
+        # Helper to map feature name to surface type (for Location column) - Enhanced for torus
         def get_surface_type(feature_name):
-            fname = feature_name.lower()
+            if not feature_name:
+                return "surface"
+                
+            fname = str(feature_name).lower()
+            
+            # Check for torus patterns first
+            if "torus" in fname:
+                return "torus side"
+            # Check for cleaned patterns
+            cleaned_name = clean_feature_name(feature_name)
+            if cleaned_name == "torus":
+                return "torus side"
+                
             if "plane1" in fname or "top" in fname:
                 return "top face"
             elif "plane2" in fname or "bottom" in fname:
@@ -366,11 +405,23 @@ def create_interface():
             elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
                 return "cylindrical side"
             else:
-                return feature_name
+                return str(feature_name)
 
-        # Helper to map feature name and type to Surface (for Surface column) - WITHOUT axis orientation
+        # Helper to map feature name and type to Surface (for Surface column) - Enhanced for torus
         def get_likely_location(label, feature_name):
-            fname = feature_name.lower()
+            if not feature_name:
+                return "surface"
+                
+            fname = str(feature_name).lower()
+            
+            # Check for torus patterns first
+            if "torus" in fname:
+                return "torus side"
+            # Check for cleaned patterns
+            cleaned_name = clean_feature_name(feature_name)
+            if cleaned_name == "torus":
+                return "torus side"
+                
             if "plane1" in fname or "top" in fname:
                 return "top face"
             elif "plane2" in fname or "bottom" in fname:
@@ -382,7 +433,7 @@ def create_interface():
             elif "face" in fname:
                 return "planar face"
             else:
-                return feature_name
+                return str(feature_name)
 
         # Build output text for results
         table_rows = []
