@@ -163,13 +163,13 @@ def create_interface():
             else:
                 return feature_name
 
-        # Helper to map feature name and type to Surface (for Surface column)
+        # Helper to map feature name and type to Surface (for Surface column) - WITHOUT axis orientation
         def get_likely_location(label, feature_name):
             fname = feature_name.lower()
             if "plane1" in fname or "top" in fname:
-                return "top face (facing +Z)"
+                return "top face"
             elif "plane2" in fname or "bottom" in fname:
-                return "bottom face (facing -Z)"
+                return "bottom face"
             elif "cone" in fname or "conical" in fname:
                 return "conical side of the part"
             elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
@@ -179,51 +179,6 @@ def create_interface():
             else:
                 return feature_name
 
-        # Parse DIRECTION and AXIS2_PLACEMENT_3D for axis orientation
-        direction_map = {}  # Maps DIRECTION entity IDs to vectors
-        axis_map = {}       # Maps AXIS2_PLACEMENT_3D IDs to direction IDs
-        plane_map = {}      # Maps PLANE IDs to AXIS2_PLACEMENT_3D IDs
-        for line in lines:
-            # Parse DIRECTION entity
-            dir_match = re.match(
-                r"#(\d+)=DIRECTION\('[^']*',\(([^)]*)\)\);", line)
-            if dir_match:
-                dir_id, vec = dir_match.groups()
-                vec = tuple(float(x) for x in vec.split(","))
-                direction_map[dir_id] = vec
-            # Parse AXIS2_PLACEMENT_3D entity
-            axis_match = re.match(
-                r"#(\d+)=AXIS2_PLACEMENT_3D\('[^']*',#(\d+),#(\d+),#(\d+)\);", line)
-            if axis_match:
-                axis_id, pt_id, dir1_id, dir2_id = axis_match.groups()
-                axis_map[axis_id] = (dir1_id, dir2_id)
-            # Parse PLANE entity
-            plane_match = re.match(r"#(\d+)=PLANE\('[^']*',#(\d+)\);", line)
-            if plane_match:
-                plane_id, axis_id = plane_match.groups()
-                plane_map[plane_id] = axis_id
-
-        # Helper to get axis orientation from plane_id
-        def get_axis_orientation(plane_id):
-            axis_id = plane_map.get(plane_id)
-            if not axis_id:
-                return "unknown axis"
-            dir_ids = axis_map.get(axis_id)
-            if not dir_ids:
-                return "unknown axis"
-            # Usually the first direction is the normal
-            dir_vec = direction_map.get(dir_ids[0])
-            if not dir_vec:
-                return "unknown axis"
-            # Find closest axis
-            axis_labels = ["X", "Y", "Z"]
-            axis_vectors = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
-            dot_products = [abs(sum(a*b for a, b in zip(dir_vec, axis)))
-                            for axis in axis_vectors]
-            max_idx = dot_products.index(max(dot_products))
-            sign = '+' if dir_vec[max_idx] >= 0 else '-'
-            return f"facing {sign}{axis_labels[max_idx]}"
-
         # Build output text for results
         output = f"{'Type':<18}{'Value':<10}{'Datum':<9}{'Location':<18}{'Surface':<25}\n" + "-" * 80 + "\n"
         for label, value, datum, loc in tol_results:
@@ -231,14 +186,6 @@ def create_interface():
             type_with_symbol = f"{symbol} {label}" if symbol else label
             location_str = get_surface_type(loc)
             likely_location = get_likely_location(label, loc)
-            # If planar face, try to get axis orientation
-            axis_info = ""
-            for pid in plane_map:
-                if location_str.startswith("top face") or location_str.startswith("bottom face"):
-                    axis_info = get_axis_orientation(pid)
-                    break
-            if axis_info and axis_info != "unknown axis":
-                likely_location = f"{location_str} ({axis_info})"
             output += f"{type_with_symbol:<18}{value:<10}{datum:<9}{location_str:<18}{likely_location:<25}\n\n"
         # Output datums with their mapped locations
         for d_letter in datum_letter_to_faceid:
@@ -246,13 +193,6 @@ def create_interface():
             feature_name = faceid_to_name.get(faceid, "")
             location_str = get_surface_type(feature_name)
             likely_location = get_likely_location('Datum', feature_name)
-            axis_info = ""
-            for pid in plane_map:
-                if location_str.startswith("top face") or location_str.startswith("bottom face"):
-                    axis_info = get_axis_orientation(pid)
-                    break
-            if axis_info and axis_info != "unknown axis":
-                likely_location = f"{location_str} ({axis_info})"
             output += f"{'Datum':<18}{d_letter:<10}{d_letter:<9}{location_str:<18}{likely_location:<25}\n\n"
         if not tol_results and not datum_results:
             return "⚠️ No tolerance or datum data found."
@@ -393,13 +333,13 @@ def create_interface():
             else:
                 return feature_name
 
-        # Helper to map feature name and type to Surface (for Surface column)
+        # Helper to map feature name and type to Surface (for Surface column) - WITHOUT axis orientation
         def get_likely_location(label, feature_name):
             fname = feature_name.lower()
             if "plane1" in fname or "top" in fname:
-                return "top face (facing +Z)"
+                return "top face"
             elif "plane2" in fname or "bottom" in fname:
-                return "bottom face (facing -Z)"
+                return "bottom face"
             elif "cone" in fname or "conical" in fname:
                 return "conical side of the part"
             elif "boss1" in fname or "cylindrical" in fname or "side" in fname:
@@ -409,49 +349,6 @@ def create_interface():
             else:
                 return feature_name
 
-        # Parse DIRECTION and AXIS2_PLACEMENT_3D for axis orientation
-        direction_map = {}  # Maps DIRECTION entity IDs to vectors
-        axis_map = {}       # Maps AXIS2_PLACEMENT_3D IDs to direction IDs
-        plane_map = {}      # Maps PLANE IDs to AXIS2_PLACEMENT_3D IDs
-        for line in lines:
-            # Parse DIRECTION entity
-            dir_match = re.match(
-                r"#(\d+)=DIRECTION\('[^']*',\(([^)]*)\)\);", line)
-            if dir_match:
-                dir_id, vec = dir_match.groups()
-                vec = tuple(float(x) for x in vec.split(","))
-                direction_map[dir_id] = vec
-            # Parse AXIS2_PLACEMENT_3D entity
-            axis_match = re.match(
-                r"#(\d+)=AXIS2_PLACEMENT_3D\('[^']*',#(\d+),#(\d+),#(\d+)\);", line)
-            if axis_match:
-                axis_id, pt_id, dir1_id, dir2_id = axis_match.groups()
-                axis_map[axis_id] = (dir1_id, dir2_id)
-            # Parse PLANE entity
-            plane_match = re.match(r"#(\d+)=PLANE\('[^']*',#(\d+)\);", line)
-            if plane_match:
-                plane_id, axis_id = plane_match.groups()
-                plane_map[plane_id] = axis_id
-
-        # Helper to get axis orientation from plane_id
-        def get_axis_orientation(plane_id):
-            axis_id = plane_map.get(plane_id)
-            if not axis_id:
-                return "unknown axis"
-            dir_ids = axis_map.get(axis_id)
-            if not dir_ids:
-                return "unknown axis"
-            dir_vec = direction_map.get(dir_ids[0])
-            if not dir_vec:
-                return "unknown axis"
-            axis_labels = ["X", "Y", "Z"]
-            axis_vectors = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
-            dot_products = [abs(sum(a*b for a, b in zip(dir_vec, axis)))
-                            for axis in axis_vectors]
-            max_idx = dot_products.index(max(dot_products))
-            sign = '+' if dir_vec[max_idx] >= 0 else '-'
-            return f"facing {sign}{axis_labels[max_idx]}"
-
         # Build output text for results
         table_rows = []
         for label, value, datum, loc in tol_results:
@@ -459,13 +356,7 @@ def create_interface():
             type_with_symbol = f"{symbol} {label}" if symbol else label
             location_str = get_surface_type(loc)
             surface = get_likely_location(label, loc)
-            axis_info = ""
-            for pid in plane_map:
-                if location_str.startswith("top face") or location_str.startswith("bottom face"):
-                    axis_info = get_axis_orientation(pid)
-                    break
-            if axis_info and axis_info != "unknown axis":
-                surface = f"{location_str} ({axis_info})"
+            # Removed axis orientation logic - no more "(facing +Z)" or "(facing -Z)"
             table_rows.append(
                 (type_with_symbol, value, datum, location_str, surface))
         for d_letter in datum_letter_to_faceid:
@@ -473,13 +364,7 @@ def create_interface():
             feature_name = faceid_to_name.get(faceid, "")
             location_str = get_surface_type(feature_name)
             surface = get_likely_location('Datum', feature_name)
-            axis_info = ""
-            for pid in plane_map:
-                if location_str.startswith("top face") or location_str.startswith("bottom face"):
-                    axis_info = get_axis_orientation(pid)
-                    break
-            if axis_info and axis_info != "unknown axis":
-                surface = f"{location_str} ({axis_info})"
+            # Removed axis orientation logic - no more "(facing +Z)" or "(facing -Z)"
             table_rows.append(
                 ("Datum", d_letter, d_letter, location_str, surface))
         return table_rows
@@ -642,65 +527,6 @@ def create_interface():
     output_table.tag_configure('odd', background='#e9ecef')
     output_table.pack(expand=True, fill='both', padx=20, pady=10)
 
-    # --- Check Datum A and B orientation from STEP data ---
-    step_text = '''
-#137=PLANE('',#136);
-#136=AXIS2_PLACEMENT_3D('',#133,#134,#135);
-#133=CARTESIAN_POINT('',(0.,0.,0.));
-#134=DIRECTION('',(0.,0.,1.));
-#135=DIRECTION('',(1.,0.,0.));
-#231=PLANE('',#230);
-#230=AXIS2_PLACEMENT_3D('',#227,#228,#229);
-#227=CARTESIAN_POINT('',(10.,0.,0.));
-#228=DIRECTION('',(1.,0.,0.));
-#229=DIRECTION('',(0.,0.,-1.));
-'''
-    lines = step_text.splitlines()
-    plane_id_to_axis = {}
-    axis_id_to_dir = {}
-    dir_id_to_vec = {}
-    for line in lines:
-        # Parse PLANE entity
-        plane_match = re.match(r"#(\d+)=PLANE\('[^']*',#(\d+)\);", line)
-        if plane_match:
-            pid, aid = plane_match.groups()
-            plane_id_to_axis[pid] = aid
-        # Parse AXIS2_PLACEMENT_3D entity
-        axis_match = re.match(
-            r"#(\d+)=AXIS2_PLACEMENT_3D\('[^']*',#(\d+),#(\d+),#(\d+)\);", line)
-        if axis_match:
-            aid, ptid, dir1id, dir2id = axis_match.groups()
-            axis_id_to_dir[aid] = (dir1id, dir2id)
-        # Parse DIRECTION entity
-        dir_match = re.match(r"#(\d+)=DIRECTION\('[^']*',\(([^)]*)\)\);", line)
-        if dir_match:
-            did, vec = dir_match.groups()
-            vec = tuple(float(x) for x in vec.split(","))
-            dir_id_to_vec[did] = vec
-    # Helper to get axis orientation from plane_id
-
-    def get_axis_orientation(plane_id):
-        axis_id = plane_id_to_axis.get(plane_id)
-        if not axis_id:
-            return "unknown axis"
-        dir_ids = axis_id_to_dir.get(axis_id)
-        if not dir_ids:
-            return "unknown axis"
-        dir_vec = dir_id_to_vec.get(dir_ids[0])
-        if not dir_vec:
-            return "unknown axis"
-        axis_labels = ["X", "Y", "Z"]
-        axis_vectors = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
-        dot_products = [abs(sum(a*b for a, b in zip(dir_vec, axis)))
-                        for axis in axis_vectors]
-        max_idx = dot_products.index(max(dot_products))
-        sign = '+' if dir_vec[max_idx] >= 0 else '-'
-        return f"facing {sign}{axis_labels[max_idx]}"
-    # Example usage (can be used for debugging or further logic)
-    datum_a_orientation = get_axis_orientation('137')
-    datum_b_orientation = get_axis_orientation('231')
-
     root.mainloop()
 
 create_interface()
-
