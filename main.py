@@ -169,7 +169,7 @@ def create_interface():
             value_match = re.search(
                 r"(?:LENGTH_MEASURE|VALUE_REPRESENTATION_ITEM)\s*\(\s*([\d.]+)", definition
             )
-            value = f"±{value_match.group(1)}" if value_match else "N/A"
+            value = f"{value_match.group(1)}" if value_match else "N/A"
             label = "Circularity" if tol_type.upper() == "ROUNDNESS" else tol_type.capitalize()
 
             # Find the last # reference in the tolerance line for datum mapping
@@ -370,7 +370,7 @@ def create_interface():
             value_match = re.search(
                 r"(?:LENGTH_MEASURE|VALUE_REPRESENTATION_ITEM)\s*\(\s*([\d.]+)", definition
             )
-            value = f"±{value_match.group(1)}" if value_match else "N/A"
+            value = f"{value_match.group(1)}" if value_match else "N/A"
             label = "Circularity" if tol_type.upper() == "ROUNDNESS" else tol_type.capitalize()
 
             # Find the last # reference in the tolerance line for datum mapping
