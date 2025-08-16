@@ -99,14 +99,17 @@ def create_interface():
             for line in lines if re.match(r"(#\d+)\s*=", line)
         }
 
-        # Regex patterns for tolerance, datum, and shape aspect entities
+        # Enhanced regex patterns for tolerance, datum, and shape aspect entities
         tol_pattern = re.compile(
             r"(#\d+)\s*=\s*(CYLINDRICITY|FLATNESS|STRAIGHTNESS|ROUNDNESS)_TOLERANCE"
             r"\(\s*'([^']*)'\s*,\s*''\s*,\s*(#\d+)", re.IGNORECASE
         )
+        
+        # Updated datum pattern to handle the new format
         datum_pattern = re.compile(
-            r"#\d+\s*=\s*DATUM_FEATURE\(\s*'[^']*?\((\w)\)'", re.IGNORECASE
+            r"#\d+\s*=\s*DATUM\('([^']*)',\$,#\d+,\.F\.,'([A-Z])'\);", re.IGNORECASE
         )
+        
         shape_aspect_pattern = re.compile(
             r"#\d+\s*=\s*SHAPE_ASPECT\('([^']*?)\((\w)?'?,.*?#(\d+)\)"
         )
@@ -115,30 +118,36 @@ def create_interface():
         datum_results = {}  # Mapping of datum letters to locations
         face_to_plane = {}  # Mapping of face IDs to surface types
 
-        # Build datum letter to face ID and feature name mapping
-        datum_letter_to_faceid = {}
-        faceid_to_name = {}
-        # Find all DATUM and SHAPE_ASPECT lines
+        # Enhanced datum extraction - Build datum letter to feature name mapping
+        datum_letter_to_feature = {}
+        
+        # Find all DATUM lines with the enhanced pattern
         for line in lines:
-            # Parse DATUM entity
-            m = re.match(
+            # Updated regex to match your file format: #522=DATUM('Datum29@Boss1(A)',$,#23,.F.,'A');
+            datum_match = re.match(
                 r"#\d+=DATUM\('([^']*)',\$,#\d+,\.F\.,'([A-Z])'\);", line)
-            if m:
-                feature, letter = m.groups()
-                # Find corresponding SHAPE_ASPECT for this feature
-                for sa_line in lines:
-                    sa_m = re.match(
-                        r"#(\d+)=SHAPE_ASPECT\('([^']*)','',#\d+,\.T\.\);", sa_line)
-                    if sa_m and feature in sa_m.group(2):
-                        faceid = sa_m.group(1)
-                        datum_letter_to_faceid[letter] = faceid
-                        faceid_to_name[faceid] = feature
-            # Parse SHAPE_ASPECT entity
-            sa_m = re.match(
-                r"#(\d+)=SHAPE_ASPECT\('([^']*)','',#\d+,\.T\.\);", line)
-            if sa_m:
-                faceid, feature = sa_m.groups()
-                faceid_to_name[faceid] = feature
+            if datum_match:
+                feature_name, datum_letter = datum_match.groups()
+                datum_letter_to_feature[datum_letter] = feature_name
+                
+                # Extract the geometric feature type from the feature name
+                # Example: 'Datum29@Boss1(A)' -> 'Boss1', 'Datum28@Plane1(D)' -> 'Plane1'
+                feature_match = re.search(r'@([^(]+)', feature_name)
+                if feature_match:
+                    geometric_feature = feature_match.group(1).lower()
+                    if 'boss' in geometric_feature:
+                        datum_results[datum_letter] = "cylindrical side"
+                    elif 'plane1' in geometric_feature:
+                        datum_results[datum_letter] = "bottom face"
+                    elif 'plane2' in geometric_feature:
+                        datum_results[datum_letter] = "top face"
+                    elif 'plane' in geometric_feature:
+                        datum_results[datum_letter] = determine_plane_position(geometric_feature, datum_letter)
+                    else:
+                        datum_results[datum_letter] = geometric_feature
+                else:
+                    # Fallback if no @ pattern found
+                    datum_results[datum_letter] = determine_plane_position(feature_name, datum_letter)
 
         # Map face IDs to shape descriptions (Plane1, Plane2, Boss1, etc.)
         for match in shape_aspect_pattern.finditer(text):
@@ -172,36 +181,46 @@ def create_interface():
             value = f"{value_match.group(1)}" if value_match else "N/A"
             label = "Circularity" if tol_type.upper() == "ROUNDNESS" else tol_type.capitalize()
 
-            # Find the last # reference in the tolerance line for datum mapping
-            tol_line = next((l for l in lines if tol_id in l), "")
-            ref_ids = re.findall(r"#(\d+)", tol_line)
-            datum_ref_id = ref_ids[-1] if ref_ids else ref_id
-
-            # Map datum_ref_id to datum letter and location
+            # Enhanced datum letter and location detection
             datum_letter = ""
             location = ""
-            for letter, faceid in datum_letter_to_faceid.items():
-                if faceid == datum_ref_id:
-                    datum_letter = letter
-                    location = faceid_to_name.get(
-                        faceid, face_to_plane.get(faceid, ""))
-                    break
+            
+            # Method 1: Extract datum letter from tolerance name (e.g., "tolerance(A)")
+            tol_name_lower = tol_name.lower()
+            datum_match = re.search(r'\(([A-Z])\)', tol_name)
+            if datum_match:
+                datum_letter = datum_match.group(1)
+                location = datum_results.get(datum_letter, "")
+            
+            # Method 2: Try to find datum letter from tolerance name with lowercase
             if not datum_letter:
-                # Fallback to previous logic if not found
-                tol_name_lower = tol_name.lower()
                 for d_letter in datum_results:
-                    if f"({d_letter.lower()})" in tol_name_lower:
+                    if f"({d_letter.lower()})" in tol_name_lower or f"({d_letter.upper()})" in tol_name:
                         datum_letter = d_letter
+                        location = datum_results[d_letter]
                         break
-                if datum_letter and datum_letter in datum_letter_to_faceid:
-                    faceid = datum_letter_to_faceid[datum_letter]
-                    location = faceid_to_name.get(
-                        faceid, face_to_plane.get(faceid, ""))
-                else:
-                    for key, val in face_to_plane.items():
-                        if key in ref_id or key in tol_name:
-                            location = val
-                            break
+            
+            # Method 3: Check if tolerance name contains feature references
+            if not location:
+                # Look for Boss1, Plane1, Plane2 in tolerance name
+                if "boss1" in tol_name_lower:
+                    location = "cylindrical side"
+                elif "plane1" in tol_name_lower:
+                    location = "bottom face"
+                elif "plane2" in tol_name_lower:
+                    location = "top face"
+                elif "plane" in tol_name_lower:
+                    # Generic plane - try to determine from context
+                    location = "planar surface"
+            
+            # Method 4: Infer location based on tolerance type if still not found
+            if not location:
+                if label.lower() in ["cylindricity", "circularity"]:
+                    location = "cylindrical side"
+                elif label.lower() in ["flatness"]:
+                    location = "planar surface"
+                elif label.lower() in ["straightness"]:
+                    location = "surface"
 
             tol_results.append((label, value, datum_letter, location))
 
@@ -277,16 +296,33 @@ def create_interface():
         for label, value, datum, loc in tol_results:
             symbol = gdnt_symbols.get(label, "")
             type_with_symbol = f"{symbol} {label}" if symbol else label
-            location_str = get_surface_type(loc)
-            likely_location = get_likely_location(label, loc)
+            
+            # Create location string with datum reference
+            if datum:
+                location_str = f"at datum {datum}"
+            else:
+                location_str = loc if loc else "surface"
+            
+            # Map location to surface description
+            if loc == "cylindrical side":
+                likely_location = "curved side of the cylinder"
+            elif loc == "bottom face":
+                likely_location = "bottom face"
+            elif loc == "top face":
+                likely_location = "top face"
+            elif loc == "planar surface":
+                likely_location = "planar face"
+            else:
+                likely_location = loc if loc else "surface"
+                
             output += f"{type_with_symbol:<18}{value:<10}{datum:<9}{location_str:<18}{likely_location:<25}\n\n"
-        # Output datums with their mapped locations - Enhanced for better plane detection
-        for d_letter in datum_letter_to_faceid:
-            faceid = datum_letter_to_faceid[d_letter]
-            feature_name = faceid_to_name.get(faceid, "")
-            location_str = get_surface_type(feature_name)
-            likely_location = get_likely_location('Datum', feature_name)
+        
+        # Enhanced output datums with their mapped locations
+        for d_letter, feature_name in datum_letter_to_feature.items():
+            location_str = datum_results.get(d_letter, "surface")
+            likely_location = location_str
             output += f"{'Datum':<18}{d_letter:<10}{d_letter:<9}{location_str:<18}{likely_location:<25}\n\n"
+            
         if not tol_results and not datum_results:
             return "⚠️ No tolerance or datum data found."
         return output
@@ -300,14 +336,17 @@ def create_interface():
             for line in lines if re.match(r"(#\d+)\s*=", line)
         }
 
-        # Regex patterns for tolerance, datum, and shape aspect entities
+        # Enhanced regex patterns for tolerance, datum, and shape aspect entities
         tol_pattern = re.compile(
             r"(#\d+)\s*=\s*(CYLINDRICITY|FLATNESS|STRAIGHTNESS|ROUNDNESS)_TOLERANCE"
             r"\(\s*'([^']*)'\s*,\s*''\s*,\s*(#\d+)", re.IGNORECASE
         )
+        
+        # Updated datum pattern to handle the new format
         datum_pattern = re.compile(
-            r"#\d+\s*=\s*DATUM_FEATURE\(\s*'[^']*?\((\w)\)'", re.IGNORECASE
+            r"#\d+\s*=\s*DATUM\('([^']*)',\$,#\d+,\.F\.,'([A-Z])'\);", re.IGNORECASE
         )
+        
         shape_aspect_pattern = re.compile(
             r"#\d+\s*=\s*SHAPE_ASPECT\('([^']*?)\((\w)?'?,.*?#(\d+)\)"
         )
@@ -316,30 +355,36 @@ def create_interface():
         datum_results = {}  # Mapping of datum letters to locations
         face_to_plane = {}  # Mapping of face IDs to surface types
 
-        # Build datum letter to face ID and feature name mapping
-        datum_letter_to_faceid = {}
-        faceid_to_name = {}
-        # Find all DATUM and SHAPE_ASPECT lines
+        # Enhanced datum extraction - Build datum letter to feature name mapping
+        datum_letter_to_feature = {}
+        
+        # Find all DATUM lines with the enhanced pattern
         for line in lines:
-            # Parse DATUM entity
-            m = re.match(
+            # Updated regex to match your file format: #522=DATUM('Datum29@Boss1(A)',$,#23,.F.,'A');
+            datum_match = re.match(
                 r"#\d+=DATUM\('([^']*)',\$,#\d+,\.F\.,'([A-Z])'\);", line)
-            if m:
-                feature, letter = m.groups()
-                # Find corresponding SHAPE_ASPECT for this feature
-                for sa_line in lines:
-                    sa_m = re.match(
-                        r"#(\d+)=SHAPE_ASPECT\('([^']*)','',#\d+,\.T\.\);", sa_line)
-                    if sa_m and feature in sa_m.group(2):
-                        faceid = sa_m.group(1)
-                        datum_letter_to_faceid[letter] = faceid
-                        faceid_to_name[faceid] = feature
-            # Parse SHAPE_ASPECT entity
-            sa_m = re.match(
-                r"#(\d+)=SHAPE_ASPECT\('([^']*)','',#\d+,\.T\.\);", line)
-            if sa_m:
-                faceid, feature = sa_m.groups()
-                faceid_to_name[faceid] = feature
+            if datum_match:
+                feature_name, datum_letter = datum_match.groups()
+                datum_letter_to_feature[datum_letter] = feature_name
+                
+                # Extract the geometric feature type from the feature name
+                # Example: 'Datum29@Boss1(A)' -> 'Boss1', 'Datum28@Plane1(D)' -> 'Plane1'
+                feature_match = re.search(r'@([^(]+)', feature_name)
+                if feature_match:
+                    geometric_feature = feature_match.group(1).lower()
+                    if 'boss' in geometric_feature:
+                        datum_results[datum_letter] = "cylindrical side"
+                    elif 'plane1' in geometric_feature:
+                        datum_results[datum_letter] = "bottom face"
+                    elif 'plane2' in geometric_feature:
+                        datum_results[datum_letter] = "top face"
+                    elif 'plane' in geometric_feature:
+                        datum_results[datum_letter] = determine_plane_position(geometric_feature, datum_letter)
+                    else:
+                        datum_results[datum_letter] = geometric_feature
+                else:
+                    # Fallback if no @ pattern found
+                    datum_results[datum_letter] = determine_plane_position(feature_name, datum_letter)
 
         # Map face IDs to shape descriptions (Plane1, Plane2, Boss1, etc.)
         for match in shape_aspect_pattern.finditer(text):
@@ -373,36 +418,46 @@ def create_interface():
             value = f"{value_match.group(1)}" if value_match else "N/A"
             label = "Circularity" if tol_type.upper() == "ROUNDNESS" else tol_type.capitalize()
 
-            # Find the last # reference in the tolerance line for datum mapping
-            tol_line = next((l for l in lines if tol_id in l), "")
-            ref_ids = re.findall(r"#(\d+)", tol_line)
-            datum_ref_id = ref_ids[-1] if ref_ids else ref_id
-
-            # Map datum_ref_id to datum letter and location
+            # Enhanced datum letter and location detection
             datum_letter = ""
             location = ""
-            for letter, faceid in datum_letter_to_faceid.items():
-                if faceid == datum_ref_id:
-                    datum_letter = letter
-                    location = faceid_to_name.get(
-                        faceid, face_to_plane.get(faceid, ""))
-                    break
+            
+            # Method 1: Extract datum letter from tolerance name (e.g., "tolerance(A)")
+            tol_name_lower = tol_name.lower()
+            datum_match = re.search(r'\(([A-Z])\)', tol_name)
+            if datum_match:
+                datum_letter = datum_match.group(1)
+                location = datum_results.get(datum_letter, "")
+            
+            # Method 2: Try to find datum letter from tolerance name with lowercase
             if not datum_letter:
-                # Fallback to previous logic if not found
-                tol_name_lower = tol_name.lower()
                 for d_letter in datum_results:
-                    if f"({d_letter.lower()})" in tol_name_lower:
+                    if f"({d_letter.lower()})" in tol_name_lower or f"({d_letter.upper()})" in tol_name:
                         datum_letter = d_letter
+                        location = datum_results[d_letter]
                         break
-                if datum_letter and datum_letter in datum_letter_to_faceid:
-                    faceid = datum_letter_to_faceid[datum_letter]
-                    location = faceid_to_name.get(
-                        faceid, face_to_plane.get(faceid, ""))
-                else:
-                    for key, val in face_to_plane.items():
-                        if key in ref_id or key in tol_name:
-                            location = val
-                            break
+            
+            # Method 3: Check if tolerance name contains feature references
+            if not location:
+                # Look for Boss1, Plane1, Plane2 in tolerance name
+                if "boss1" in tol_name_lower:
+                    location = "cylindrical side"
+                elif "plane1" in tol_name_lower:
+                    location = "bottom face"
+                elif "plane2" in tol_name_lower:
+                    location = "top face"
+                elif "plane" in tol_name_lower:
+                    # Generic plane - try to determine from context
+                    location = "planar surface"
+            
+            # Method 4: Infer location based on tolerance type if still not found
+            if not location:
+                if label.lower() in ["cylindricity", "circularity"]:
+                    location = "cylindrical side"
+                elif label.lower() in ["flatness"]:
+                    location = "planar surface"
+                elif label.lower() in ["straightness"]:
+                    location = "surface"
 
             tol_results.append((label, value, datum_letter, location))
 
@@ -491,25 +546,42 @@ def create_interface():
             else:
                 return str(feature_name)
 
-        # Build output text for results
+        # Build table rows for results
         table_rows = []
         for label, value, datum, loc in tol_results:
             symbol = gdnt_symbols.get(label, "")
             type_with_symbol = f"{symbol} {label}" if symbol else label
-            location_str = get_surface_type(loc)
-            surface = get_likely_location(label, loc)
+            
+            # Create location string with datum reference
+            if datum:
+                location_str = f"at datum {datum}"
+            else:
+                location_str = loc if loc else "surface"
+            
+            # Map location to surface description for consistency
+            if loc == "cylindrical side":
+                surface = "curved side of the cylinder"
+            elif loc == "bottom face":
+                surface = "bottom face"
+            elif loc == "top face":
+                surface = "top face"  
+            elif loc == "planar surface":
+                surface = "planar face"
+            else:
+                surface = loc if loc else "surface"
+                
             table_rows.append(
                 (type_with_symbol, value, datum, location_str, surface))
         
-        # Enhanced datum processing with better plane detection
-        for d_letter in datum_letter_to_faceid:
-            faceid = datum_letter_to_faceid[d_letter]
-            feature_name = faceid_to_name.get(faceid, "")
-            # Pass datum letter for better detection
-            location_str = determine_plane_position(feature_name, d_letter) if "plane" in str(feature_name).lower() else get_surface_type(feature_name)
-            surface = determine_plane_position(feature_name, d_letter) if "plane" in str(feature_name).lower() else get_likely_location('Datum', feature_name)
+        # Enhanced datum processing with better plane detection and feature extraction
+        for d_letter, feature_name in datum_letter_to_feature.items():
+            location_str = datum_results.get(d_letter, "surface")
+            surface = location_str
+            
+            # For datums, keep the original surface location in Location column
             table_rows.append(
                 ("Datum", d_letter, d_letter, location_str, surface))
+                
         return table_rows
 
     # Displays the results in a ttk.Treeview table
