@@ -1,12 +1,17 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox
-from PIL import Image, ImageTk
+from tkinter import filedialog, messagebox, ttk
 import re
 import os
-from tkinter import ttk
 import json
 import logging
 from datetime import datetime
+
+# Try to import PIL for image handling, fallback if not available
+try:
+    from PIL import Image, ImageTk
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -27,7 +32,9 @@ class GDTExtractor:
             "Cylindricity": "⌀",
             "Diameter": "⌀",
             "Length": "↔",
-            "Linear Distance": "↔"
+            "Linear Distance": "↔",
+            "Distance": "↔",
+            "Size": "⌀"
         }
         
     def calculate_tolerance_limits(self, tolerance_type, tolerance_value, nominal_value=0):
@@ -207,80 +214,149 @@ class GDTExtractor:
         else:
             return str(feature_name)
 
-    def extract_dimensional_tolerances(self, text, line_dict):
-        """Extract dimensional tolerances (diameter, length) with their tolerance values and datum references"""
+    def find_datum_for_dimensional_tolerance(self, feature_name, datum_results, datum_letter_to_feature):
+        """Enhanced: Find appropriate datum for dimensional tolerances based on feature name and type"""
+        if not feature_name:
+            return ""
+        
+        fname = str(feature_name).lower()
+        
+        # Method 1: Direct datum reference extraction from feature name
+        # Look for patterns like "Datum29@Boss1(A)" in feature name
+        datum_match = re.search(r'datum\d+@[^(]*\(([A-Z])\)', fname)
+        if datum_match:
+            return datum_match.group(1)
+        
+        # Method 2: Look for datum letter in parentheses
+        paren_match = re.search(r'\(([A-Z])\)', fname)
+        if paren_match:
+            candidate_datum = paren_match.group(1)
+            if candidate_datum in datum_results:
+                return candidate_datum
+        
+        # Method 3: Match based on feature type compatibility
+        if "boss" in fname or "cylinder" in fname:
+            # For cylindrical features, look for cylindrical datums
+            for datum_letter, location in datum_results.items():
+                if "cylindrical" in location.lower():
+                    return datum_letter
+            # If no cylindrical datum found, use the first available
+            if datum_results:
+                return list(datum_results.keys())[0]
+        
+        elif "plane" in fname:
+            # For planar features, look for planar datums
+            plane_num_match = re.search(r'plane(\d+)', fname)
+            if plane_num_match:
+                plane_num = int(plane_num_match.group(1))
+                # Try to match plane number with datum sequence
+                datum_letters = sorted(datum_results.keys())
+                if plane_num <= len(datum_letters):
+                    return datum_letters[plane_num - 1]
+            
+            # Look for planar datums
+            for datum_letter, location in datum_results.items():
+                if any(keyword in location.lower() for keyword in ["face", "plane"]):
+                    return datum_letter
+        
+        # Method 4: Match by feature name similarity
+        for datum_letter, datum_feature_name in datum_letter_to_feature.items():
+            datum_feature_lower = datum_feature_name.lower()
+            
+            # Extract core feature identifiers
+            if "boss" in fname and "boss" in datum_feature_lower:
+                return datum_letter
+            elif "plane1" in fname and "plane1" in datum_feature_lower:
+                return datum_letter
+            elif "plane2" in fname and "plane2" in datum_feature_lower:
+                return datum_letter
+            elif "plane" in fname and "plane" in datum_feature_lower:
+                return datum_letter
+        
+        # Method 5: Default assignment based on common CAD conventions
+        if datum_results:
+            # For diameter measurements, typically use the primary datum (A) or cylindrical datum
+            if any(keyword in fname for keyword in ["boss", "cylinder", "diameter"]):
+                # Look for datum A first (often primary)
+                if 'A' in datum_results:
+                    return 'A'
+                # Then look for any cylindrical datum
+                for datum_letter, location in datum_results.items():
+                    if "cylindrical" in location.lower():
+                        return datum_letter
+            
+            # For length measurements, use appropriate planar datums
+            elif any(keyword in fname for keyword in ["plane", "length", "distance"]):
+                # Look for datum A first (often base plane)
+                if 'A' in datum_results:
+                    return 'A'
+                # Then look for any planar datum
+                for datum_letter, location in datum_results.items():
+                    if any(keyword in location.lower() for keyword in ["face", "plane"]):
+                        return datum_letter
+            
+            # If all else fails, return the first available datum
+            return list(datum_results.keys())[0]
+        
+        return ""
+
+    def extract_dimensional_tolerances(self, text, line_dict, datum_results=None, datum_letter_to_feature=None):
+        """COMPREHENSIVE: Extract all dimensional tolerances (diameter, length, distance) with enhanced detection"""
         dimensional_results = []
         
+        # Ensure we have datum information
+        if datum_results is None:
+            datum_results = {}
+        if datum_letter_to_feature is None:
+            datum_letter_to_feature = {}
+        
         try:
-            # Pattern to find DIMENSIONAL_SIZE for diameter
-            dimensional_size_pattern = re.compile(
-                r"(#\d+)\s*=\s*DIMENSIONAL_SIZE\s*\(\s*(#\d+)\s*,\s*'([^']*)'\s*\)", re.IGNORECASE
-            )
+            # Build comprehensive mappings first
+            tolerance_values = {}
+            length_measures = {}
+            nominal_values = {}
+            dimension_to_tolerance = {}
+            shape_aspect_mapping = {}
+            dimensional_characteristic_mapping = {}
             
-            # Pattern to find DIMENSIONAL_LOCATION for length/distance
-            dimensional_location_pattern = re.compile(
-                r"(#\d+)\s*=\s*DIMENSIONAL_LOCATION\s*\(\s*'([^']*)'[^#]*#(\d+)[^#]*#(\d+)", re.IGNORECASE
-            )
+            # Pattern 1: Extract all LENGTH_MEASURE values (including variations)
+            length_measure_patterns = [
+                r"(#\d+)\s*=.*?LENGTH_MEASURE\(([^)]+)\)",
+                r"(#\d+)\s*=.*?POSITIVE_LENGTH_MEASURE\(([^)]+)\)",
+                r"(#\d+)\s*=.*?MEASURE_WITH_UNIT\s*\(\s*LENGTH_MEASURE\(([^)]+)\)",
+                r"(#\d+)\s*=.*?VALUE_REPRESENTATION_ITEM\s*\(\s*'[^']*'\s*,\s*LENGTH_MEASURE\(([^)]+)\)"
+            ]
             
-            # Pattern to find PLUS_MINUS_TOLERANCE
-            plus_minus_tolerance_pattern = re.compile(
-                r"(#\d+)\s*=\s*PLUS_MINUS_TOLERANCE\s*\(\s*(#\d+)\s*,\s*(#\d+)\s*\)", re.IGNORECASE
-            )
+            for pattern in length_measure_patterns:
+                for match in re.finditer(pattern, text, re.IGNORECASE):
+                    groups = match.groups()
+                    entity_id = groups[0]
+                    measure_value = groups[-1]  # Last group is always the value
+                    try:
+                        length_measures[entity_id] = float(measure_value)
+                    except ValueError:
+                        continue
             
-            # Pattern to find TOLERANCE_VALUE with upper and lower limits
+            # Pattern 2: Extract nominal values from various sources
+            nominal_patterns = [
+                r"(#\d+)\s*=.*?POSITIVE_LENGTH_MEASURE\(([^)]+)\)",
+                r"(#\d+)\s*=.*?LENGTH_MEASURE\(([^)]+)\)",
+                r"(#\d+)\s*=.*?MEASURE_WITH_UNIT\s*\(\s*[^,]*,\s*([^)]+)\)"
+            ]
+            
+            for pattern in nominal_patterns:
+                for match in re.finditer(pattern, text, re.IGNORECASE):
+                    entity_id, value_str = match.groups()
+                    try:
+                        nominal_values[entity_id] = float(value_str)
+                    except (ValueError, TypeError):
+                        continue
+            
+            # Pattern 3: Build TOLERANCE_VALUE relationships (upper and lower limits)
             tolerance_value_pattern = re.compile(
                 r"(#\d+)\s*=\s*TOLERANCE_VALUE\s*\(\s*(#\d+)\s*,\s*(#\d+)\s*\)", re.IGNORECASE
             )
             
-            # Pattern to find LENGTH_MEASURE_WITH_UNIT for nominal values and tolerances
-            length_measure_pattern = re.compile(
-                r"(#\d+)\s*=.*?LENGTH_MEASURE\(([^)]+)\)", re.IGNORECASE
-            )
-            
-            # Pattern to find nominal values in MEASURE_WITH_UNIT
-            nominal_value_pattern = re.compile(
-                r"POSITIVE_LENGTH_MEASURE\(([^)]+)\)", re.IGNORECASE
-            )
-            
-            # Build mapping of tolerance relationships
-            tolerance_map = {}
-            dimension_to_tolerance = {}
-            tolerance_values = {}
-            length_measures = {}
-            nominal_values = {}
-            
-            # Build datum mapping from the existing datum extraction logic
-            datum_letter_to_feature = {}
-            datum_pattern = re.compile(
-                r"#\d+\s*=\s*DATUM\('([^']*)',\$,#\d+,\.F\.,'([A-Z])'\);", re.IGNORECASE
-            )
-            
-            for line in text.splitlines():
-                datum_match = datum_pattern.match(line)
-                if datum_match:
-                    feature_name, datum_letter = datum_match.groups()
-                    datum_letter_to_feature[datum_letter] = feature_name
-            
-            # Extract LENGTH_MEASURE values
-            for match in length_measure_pattern.finditer(text):
-                entity_id, measure_value = match.groups()
-                try:
-                    length_measures[entity_id] = float(measure_value)
-                except ValueError:
-                    pass
-            
-            # Extract nominal values
-            for line in text.splitlines():
-                nominal_match = nominal_value_pattern.search(line)
-                if nominal_match:
-                    entity_match = re.match(r"(#\d+)\s*=", line)
-                    if entity_match:
-                        try:
-                            nominal_values[entity_match.group(1)] = float(nominal_match.group(1))
-                        except ValueError:
-                            pass
-            
-            # Extract TOLERANCE_VALUE relationships (upper and lower limits)
             for match in tolerance_value_pattern.finditer(text):
                 tol_val_id, lower_ref, upper_ref = match.groups()
                 lower_value = length_measures.get(lower_ref, 0)
@@ -291,7 +367,11 @@ class GDTExtractor:
                     'range': abs(upper_value - lower_value)
                 }
             
-            # Extract PLUS_MINUS_TOLERANCE relationships
+            # Pattern 4: Build PLUS_MINUS_TOLERANCE relationships
+            plus_minus_tolerance_pattern = re.compile(
+                r"(#\d+)\s*=\s*PLUS_MINUS_TOLERANCE\s*\(\s*(#\d+)\s*,\s*(#\d+)\s*\)", re.IGNORECASE
+            )
+            
             for match in plus_minus_tolerance_pattern.finditer(text):
                 pm_tol_id, tolerance_val_ref, dimension_ref = match.groups()
                 dimension_to_tolerance[dimension_ref] = {
@@ -299,190 +379,267 @@ class GDTExtractor:
                     'pm_tolerance_id': pm_tol_id
                 }
             
-            # Process DIMENSIONAL_SIZE (diameters)
-            for match in dimensional_size_pattern.finditer(text):
-                dim_size_id, shape_aspect_ref, dim_type = match.groups()
-                
-                # Get the shape aspect information
-                shape_aspect_line = line_dict.get(shape_aspect_ref, "")
-                feature_name = ""
-                diameter_value = ""
-                datum_letter = ""
-                
-                # Extract feature name from shape aspect
-                shape_aspect_match = re.search(r"SHAPE_ASPECT\s*\(\s*'([^']*)'", shape_aspect_line)
-                if shape_aspect_match:
-                    feature_name = shape_aspect_match.group(1)
-                    
-                    # Extract datum letter from feature name (e.g., "Diameter1@Boss1(70)" -> look for associated datum)
-                    # Look for datum that references the same feature
-                    for d_letter, d_feature in datum_letter_to_feature.items():
-                        if "boss1" in feature_name.lower() and "boss1" in d_feature.lower():
-                            datum_letter = d_letter
-                            break
-                        elif "plane1" in feature_name.lower() and "plane1" in d_feature.lower():
-                            datum_letter = d_letter
-                            break
-                        elif "plane2" in feature_name.lower() and "plane2" in d_feature.lower():
-                            datum_letter = d_letter
-                            break
-                
-                # Find associated nominal value
-                for line in text.splitlines():
-                    if dim_size_id in line and "DIMENSIONAL_CHARACTERISTIC_REPRESENTATION" in line:
-                        # Find the representation reference
-                        repr_match = re.search(r"#(\d+)\)", line)
-                        if repr_match:
-                            repr_line = line_dict.get(f"#{repr_match.group(1)}", "")
-                            # Find nominal value reference in representation
-                            nominal_ref_match = re.search(r"\(#(\d+)\)", repr_line)
-                            if nominal_ref_match:
-                                nominal_ref = f"#{nominal_ref_match.group(1)}"
-                                diameter_value = nominal_values.get(nominal_ref, "")
-                
-                # Get tolerance information
-                tolerance_info = dimension_to_tolerance.get(dim_size_id, {})
-                tolerance_range = ""
-                upper_limit = ""
-                lower_limit = ""
-                
-                if tolerance_info:
-                    tol_val_id = tolerance_info.get('tolerance_id')
-                    if tol_val_id in tolerance_values:
-                        tol_data = tolerance_values[tol_val_id]
-                        tolerance_range = f"±{tol_data['range']/2:.3f}"
-                        if diameter_value:
-                            try:
-                                nom_val = float(diameter_value)
-                                upper_limit = f"{nom_val + tol_data['upper']:.3f}"
-                                lower_limit = f"{nom_val + tol_data['lower']:.3f}"
-                            except ValueError:
-                                pass
-                
-                # Determine location based on feature name and datum
-                location = "cylindrical surface"
-                surface = "curved side of the cylinder"
-                if "boss" in feature_name.lower():
-                    location = f"cylindrical side (at datum {datum_letter})" if datum_letter else "cylindrical side"
-                    surface = "curved side of the cylinder"
-                elif "plane" in feature_name.lower():
-                    plane_pos = self.determine_plane_position(feature_name, datum_letter)
-                    location = f"{plane_pos} (at datum {datum_letter})" if datum_letter else plane_pos
-                    surface = plane_pos
-                
-                # Create symbol with type
-                symbol = self.gdnt_symbols.get("Diameter", "⌀")
-                type_with_symbol = f"{symbol} Diameter"
-                
-                dimensional_results.append((
-                    type_with_symbol, 
-                    str(diameter_value) if diameter_value else "N/A",
-                    datum_letter,  # Now properly populated with datum reference
-                    location,
-                    surface,
-                    tolerance_range,
-                    upper_limit,
-                    lower_limit
-                ))
+            # Pattern 5: Build SHAPE_ASPECT mappings
+            shape_aspect_patterns = [
+                r"(#\d+)\s*=\s*SHAPE_ASPECT\s*\(\s*'([^']*)'",
+                r"(#\d+)\s*=\s*[A-Z_]*SHAPE_ASPECT[A-Z_]*\s*\(\s*'([^']*)'",
+                r"(#\d+)\s*=\s*DIMENSIONAL_SIZE[A-Z_]*\s*\([^']*'([^']*)'"
+            ]
             
-            # Process DIMENSIONAL_LOCATION (lengths/distances)
-            for match in dimensional_location_pattern.finditer(text):
-                dim_loc_id, distance_type, shape_aspect1_id, shape_aspect2_id = match.groups()
-                
-                # Get shape aspect information for both references
-                shape_aspect1_line = line_dict.get(f"#{shape_aspect1_id}", "")
-                shape_aspect2_line = line_dict.get(f"#{shape_aspect2_id}", "")
-                
-                feature_name1 = ""
-                feature_name2 = ""
-                datum_letters = []
-                
-                shape_match1 = re.search(r"SHAPE_ASPECT\s*\(\s*'([^']*)'", shape_aspect1_line)
-                shape_match2 = re.search(r"SHAPE_ASPECT\s*\(\s*'([^']*)'", shape_aspect2_line)
-                
-                if shape_match1:
-                    feature_name1 = shape_match1.group(1)
-                if shape_match2:
-                    feature_name2 = shape_match2.group(1)
-                
-                # Find datum letters for both features
-                for d_letter, d_feature in datum_letter_to_feature.items():
-                    if feature_name1 and any(feat in feature_name1.lower() for feat in ["plane1", "plane2", "boss1"]):
-                        if any(feat in d_feature.lower() for feat in ["plane1", "plane2", "boss1"]):
-                            if feat in feature_name1.lower() and feat in d_feature.lower():
-                                datum_letters.append(d_letter)
-                    if feature_name2 and any(feat in feature_name2.lower() for feat in ["plane1", "plane2", "boss1"]):
-                        if any(feat in d_feature.lower() for feat in ["plane1", "plane2", "boss1"]):
-                            if feat in feature_name2.lower() and feat in d_feature.lower():
-                                datum_letters.append(d_letter)
-                
-                # Find nominal distance value
-                distance_value = ""
-                for line in text.splitlines():
-                    if dim_loc_id in line and "DIMENSIONAL_CHARACTERISTIC_REPRESENTATION" in line:
-                        repr_match = re.search(r"#(\d+)\)", line)
-                        if repr_match:
-                            repr_line = line_dict.get(f"#{repr_match.group(1)}", "")
-                            nominal_ref_match = re.search(r"\(#(\d+)\)", repr_line)
-                            if nominal_ref_match:
-                                nominal_ref = f"#{nominal_ref_match.group(1)}"
-                                distance_value = nominal_values.get(nominal_ref, "")
-                
-                # Get tolerance information
-                tolerance_info = dimension_to_tolerance.get(dim_loc_id, {})
-                tolerance_range = ""
-                upper_limit = ""
-                lower_limit = ""
-                
-                if tolerance_info:
-                    tol_val_id = tolerance_info.get('tolerance_id')
-                    if tol_val_id in tolerance_values:
-                        tol_data = tolerance_values[tol_val_id]
-                        tolerance_range = f"±{tol_data['range']/2:.3f}"
-                        if distance_value:
-                            try:
-                                nom_val = float(distance_value)
-                                upper_limit = f"{nom_val + tol_data['upper']:.3f}"
-                                lower_limit = f"{nom_val + tol_data['lower']:.3f}"
-                            except ValueError:
-                                pass
-                
-                # Determine location based on feature names and datums
-                location = "between surfaces"
-                surface = "linear distance"
-                datum_ref = ""
-                
-                if datum_letters:
-                    datum_ref = "/".join(sorted(set(datum_letters)))  # Remove duplicates and sort
-                
-                if feature_name1 and feature_name2:
-                    if "plane" in feature_name1.lower() and "plane" in feature_name2.lower():
-                        location = f"between planes (datums {datum_ref})" if datum_ref else "between planes"
-                        surface = "planar faces"
-                    elif "plane" in feature_name1.lower() or "plane" in feature_name2.lower():
-                        location = f"plane to surface (datums {datum_ref})" if datum_ref else "plane to surface"
-                        surface = "mixed surfaces"
-                
-                # Create symbol with type
-                symbol = self.gdnt_symbols.get("Linear Distance", "↔")
-                type_with_symbol = f"{symbol} {distance_type.title()}" if distance_type else f"{symbol} Length"
-                
-                dimensional_results.append((
-                    type_with_symbol,
-                    str(distance_value) if distance_value else "N/A",
-                    datum_ref,  # Now properly populated with datum reference(s)
-                    location,
-                    surface,
-                    tolerance_range,
-                    upper_limit,
-                    lower_limit
-                ))
+            for pattern in shape_aspect_patterns:
+                for match in re.finditer(pattern, text, re.IGNORECASE):
+                    entity_id, feature_name = match.groups()
+                    shape_aspect_mapping[entity_id] = feature_name
+            
+            # Pattern 6: Build DIMENSIONAL_CHARACTERISTIC_REPRESENTATION mappings
+            dim_char_pattern = re.compile(
+                r"(#\d+)\s*=\s*DIMENSIONAL_CHARACTERISTIC_REPRESENTATION\s*\([^#]*#(\d+)", re.IGNORECASE
+            )
+            
+            for match in dim_char_pattern.finditer(text):
+                dim_char_id, representation_ref = match.groups()
+                dimensional_characteristic_mapping[dim_char_id] = f"#{representation_ref}"
+            
+            # COMPREHENSIVE EXTRACTION PATTERNS
+            
+            # Pattern A: DIMENSIONAL_SIZE (for diameters and other sizes)
+            dimensional_size_patterns = [
+                r"(#\d+)\s*=\s*DIMENSIONAL_SIZE\s*\(\s*(#\d+)\s*,\s*'([^']*)'\s*\)",
+                r"(#\d+)\s*=\s*[A-Z_]*DIMENSIONAL_SIZE[A-Z_]*\s*\(\s*(#\d+)\s*,\s*'([^']*)'\s*\)",
+                r"(#\d+)\s*=\s*DIMENSIONAL_SIZE_WITH_DATUM\s*\(\s*(#\d+)\s*,\s*'([^']*)'\s*\)"
+            ]
+            
+            for pattern in dimensional_size_patterns:
+                for match in re.finditer(pattern, text, re.IGNORECASE):
+                    groups = match.groups()
+                    if len(groups) == 3:
+                        dim_size_id, shape_aspect_ref, dim_type = groups
+                    else:
+                        continue
+                    
+                    # Get feature name
+                    feature_name = shape_aspect_mapping.get(shape_aspect_ref, "")
+                    if not feature_name:
+                        # Try to extract from shape aspect line
+                        shape_aspect_line = line_dict.get(shape_aspect_ref, "")
+                        shape_aspect_match = re.search(r"SHAPE_ASPECT\s*\(\s*'([^']*)'", shape_aspect_line)
+                        if shape_aspect_match:
+                            feature_name = shape_aspect_match.group(1)
+                    
+                    # Find nominal value
+                    diameter_value = self.find_nominal_value_for_dimension(
+                        dim_size_id, text, line_dict, dimensional_characteristic_mapping, nominal_values, length_measures
+                    )
+                    
+                    # Get tolerance information
+                    tolerance_range, upper_limit, lower_limit = self.get_tolerance_info(
+                        dim_size_id, dimension_to_tolerance, tolerance_values, diameter_value
+                    )
+                    
+                    # Find datum
+                    datum_letter = self.find_datum_for_dimensional_tolerance(
+                        feature_name, datum_results, datum_letter_to_feature
+                    )
+                    
+                    # Determine location and surface
+                    location, surface = self.determine_location_and_surface(feature_name, "diameter")
+                    
+                    # Create symbol with type
+                    symbol = self.gdnt_symbols.get("Diameter", "⌀")
+                    type_with_symbol = f"{symbol} Diameter"
+                    
+                    dimensional_results.append((
+                        type_with_symbol, 
+                        str(diameter_value) if diameter_value else "N/A",
+                        datum_letter,
+                        location,
+                        surface,
+                        tolerance_range,
+                        upper_limit,
+                        lower_limit
+                    ))
+            
+            # Pattern B: DIMENSIONAL_LOCATION (for lengths and distances)
+            dimensional_location_patterns = [
+                r"(#\d+)\s*=\s*DIMENSIONAL_LOCATION\s*\(\s*'([^']*)'[^#]*#(\d+)[^#]*#(\d+)",
+                r"(#\d+)\s*=\s*[A-Z_]*DIMENSIONAL_LOCATION[A-Z_]*\s*\(\s*'([^']*)'[^#]*#(\d+)[^#]*#(\d+)",
+                r"(#\d+)\s*=\s*LINEAR_DIMENSION\s*\(\s*'([^']*)'[^#]*#(\d+)[^#]*#(\d+)"
+            ]
+            
+            for pattern in dimensional_location_patterns:
+                for match in re.finditer(pattern, text, re.IGNORECASE):
+                    dim_loc_id, distance_type, shape_aspect1_id, shape_aspect2_id = match.groups()
+                    
+                    # Get feature names
+                    feature_name1 = shape_aspect_mapping.get(f"#{shape_aspect1_id}", "")
+                    feature_name2 = shape_aspect_mapping.get(f"#{shape_aspect2_id}", "")
+                    
+                    if not feature_name1:
+                        shape_aspect1_line = line_dict.get(f"#{shape_aspect1_id}", "")
+                        shape_match1 = re.search(r"SHAPE_ASPECT\s*\(\s*'([^']*)'", shape_aspect1_line)
+                        if shape_match1:
+                            feature_name1 = shape_match1.group(1)
+                    
+                    if not feature_name2:
+                        shape_aspect2_line = line_dict.get(f"#{shape_aspect2_id}", "")
+                        shape_match2 = re.search(r"SHAPE_ASPECT\s*\(\s*'([^']*)'", shape_aspect2_line)
+                        if shape_match2:
+                            feature_name2 = shape_match2.group(1)
+                    
+                    # Combine feature names
+                    combined_feature_name = f"{feature_name1} to {feature_name2}"
+                    
+                    # Find nominal distance value
+                    distance_value = self.find_nominal_value_for_dimension(
+                        dim_loc_id, text, line_dict, dimensional_characteristic_mapping, nominal_values, length_measures
+                    )
+                    
+                    # Get tolerance information
+                    tolerance_range, upper_limit, lower_limit = self.get_tolerance_info(
+                        dim_loc_id, dimension_to_tolerance, tolerance_values, distance_value
+                    )
+                    
+                    # Find datum
+                    datum_letter = self.find_datum_for_dimensional_tolerance(
+                        combined_feature_name, datum_results, datum_letter_to_feature
+                    )
+                    
+                    # Determine location and surface
+                    location, surface = self.determine_location_and_surface(combined_feature_name, "distance")
+                    
+                    # Create symbol with type
+                    symbol = self.gdnt_symbols.get("Linear Distance", "↔")
+                    type_with_symbol = f"{symbol} {distance_type.title()}" if distance_type else f"{symbol} Length"
+                    
+                    dimensional_results.append((
+                        type_with_symbol,
+                        str(distance_value) if distance_value else "N/A",
+                        datum_letter,
+                        location,
+                        surface,
+                        tolerance_range,
+                        upper_limit,
+                        lower_limit
+                    ))
             
             return dimensional_results
             
         except Exception as e:
             logger.error(f"Error extracting dimensional tolerances: {str(e)}")
             return []
+
+    def find_nominal_value_for_dimension(self, dim_id, text, line_dict, dimensional_characteristic_mapping, nominal_values, length_measures):
+        """Find nominal value for a dimension from various sources"""
+        # Method 1: Direct lookup in nominal_values
+        if dim_id in nominal_values:
+            return nominal_values[dim_id]
+        
+        # Method 2: Look through DIMENSIONAL_CHARACTERISTIC_REPRESENTATION
+        for line in text.splitlines():
+            if dim_id in line and "DIMENSIONAL_CHARACTERISTIC_REPRESENTATION" in line:
+                repr_match = re.search(r"#(\d+)\)", line)
+                if repr_match:
+                    repr_line = line_dict.get(f"#{repr_match.group(1)}", "")
+                    nominal_ref_match = re.search(r"\(#(\d+)\)", repr_line)
+                    if nominal_ref_match:
+                        nominal_ref = f"#{nominal_ref_match.group(1)}"
+                        if nominal_ref in nominal_values:
+                            return nominal_values[nominal_ref]
+                        elif nominal_ref in length_measures:
+                            return length_measures[nominal_ref]
+        
+        # Method 3: Search in the dimension line itself
+        dim_line = line_dict.get(dim_id, "")
+        value_matches = re.findall(r'LENGTH_MEASURE\s*\(\s*([\d.]+)', dim_line)
+        if value_matches:
+            try:
+                return float(value_matches[0])
+            except ValueError:
+                pass
+        
+        # Method 4: Search for related MEASURE_WITH_UNIT
+        for line in text.splitlines():
+            if dim_id in line and "MEASURE_WITH_UNIT" in line:
+                measure_match = re.search(r'LENGTH_MEASURE\s*\(\s*([\d.]+)', line)
+                if measure_match:
+                    try:
+                        return float(measure_match.group(1))
+                    except ValueError:
+                        continue
+        
+        return ""
+
+    def get_tolerance_info(self, dim_id, dimension_to_tolerance, tolerance_values, nominal_value):
+        """Get tolerance range, upper and lower limits for a dimension"""
+        tolerance_info = dimension_to_tolerance.get(dim_id, {})
+        tolerance_range = ""
+        upper_limit = ""
+        lower_limit = ""
+        
+        if tolerance_info:
+            tol_val_id = tolerance_info.get('tolerance_id')
+            if tol_val_id in tolerance_values:
+                tol_data = tolerance_values[tol_val_id]
+                tolerance_range = f"±{tol_data['range']/2:.3f}"
+                if nominal_value:
+                    try:
+                        nom_val = float(nominal_value)
+                        upper_limit = f"{nom_val + tol_data['upper']:.3f}"
+                        lower_limit = f"{nom_val + tol_data['lower']:.3f}"
+                    except (ValueError, TypeError):
+                        pass
+        
+        return tolerance_range, upper_limit, lower_limit
+
+    def determine_location_and_surface(self, feature_name, measurement_type):
+        """Determine location and surface based on feature name and measurement type"""
+        if not feature_name:
+            if measurement_type == "diameter":
+                return "cylindrical surface", "curved side of the cylinder"
+            else:
+                return "between surfaces", "linear distance"
+        
+        fname = str(feature_name).lower()
+        
+        # Diameter/circular measurements
+        if measurement_type == "diameter" or any(keyword in fname for keyword in ["boss", "cylinder", "diameter", "radius"]):
+            if "boss" in fname:
+                return "cylindrical side", "curved side of the cylinder"
+            else:
+                return "cylindrical surface", "curved side of the cylinder"
+        
+        # Distance/linear measurements
+        elif measurement_type == "distance" or any(keyword in fname for keyword in ["plane", "length", "distance", "width", "height"]):
+            if "plane" in fname and "to" in fname:
+                return "between planes", "planar faces"
+            elif "plane" in fname:
+                return "planar surface", "planar face"
+            else:
+                return "between surfaces", "linear distance"
+        
+        # Default cases
+        else:
+            return "surface", str(feature_name)
+
+    def extract_feature_info_from_line(self, line):
+        """Extract feature information from a STEP line"""
+        # Look for feature names in quotes
+        feature_match = re.search(r"'([^']*)'", line)
+        if not feature_match:
+            return None
+        
+        feature_name = feature_match.group(1)
+        
+        # Look for measurement values
+        value_match = re.search(r'LENGTH_MEASURE\s*\(\s*([\d.]+)', line)
+        measurement_value = ""
+        if value_match:
+            try:
+                measurement_value = float(value_match.group(1))
+            except ValueError:
+                pass
+        
+        return feature_name, measurement_value
 
     def extract_tolerance_data(self, text):
         """Extract tolerance values and datums from STEP/text file with enhanced datum detection"""
@@ -697,8 +854,10 @@ class GDTExtractor:
 
                 tol_results.append((label, value, datum_letter, location, tolerance_value, upper_limit, lower_limit))
 
-            # Extract dimensional tolerances (NEW FUNCTIONALITY)
-            dimensional_tolerances = self.extract_dimensional_tolerances(text, line_dict)
+            # ENHANCED: Extract dimensional tolerances with datum information
+            dimensional_tolerances = self.extract_dimensional_tolerances(
+                text, line_dict, datum_results, datum_letter_to_feature
+            )
             
             # Build table rows for results
             table_rows = []
@@ -725,7 +884,7 @@ class GDTExtractor:
                     
                 table_rows.append((type_with_symbol, value, datum, location_str, surface, tolerance_value, upper_limit, lower_limit))
             
-            # Add dimensional tolerances (NEW)
+            # Add dimensional tolerances (ENHANCED with datums)
             for dim_tolerance in dimensional_tolerances:
                 table_rows.append(dim_tolerance)
             
@@ -779,11 +938,16 @@ class GDTExtractor:
         logo_frame = tk.Frame(self.top_frame, bg="#ffffff", borderwidth=1, relief="solid")
         logo_frame.grid(row=0, column=1, sticky="", padx=10, rowspan=2)
         
-        try:
-            logo_img = Image.open("./assets/unisza1.png").resize((100, 100))
-            self.logo_photo = ImageTk.PhotoImage(logo_img)
-            tk.Label(logo_frame, image=self.logo_photo, bg="#ffffff").pack()
-        except FileNotFoundError:
+        # Handle logo loading with PIL or fallback
+        if PIL_AVAILABLE:
+            try:
+                logo_img = Image.open("./assets/unisza1.png").resize((100, 100))
+                self.logo_photo = ImageTk.PhotoImage(logo_img)
+                tk.Label(logo_frame, image=self.logo_photo, bg="#ffffff").pack()
+            except FileNotFoundError:
+                tk.Label(logo_frame, text="LOGO\n1", bg="#ffffff", 
+                        width=12, height=6, font=("Arial", 8)).pack()
+        else:
             tk.Label(logo_frame, text="LOGO\n1", bg="#ffffff", 
                     width=12, height=6, font=("Arial", 8)).pack()
 
@@ -804,7 +968,7 @@ class GDTExtractor:
         # Subtitle
         self.subtitle_label = tk.Label(
             title_frame, 
-            text="Enhanced with Dimensional Tolerance Extraction & Datum References",
+            text="Enhanced with Dimensional Tolerance Extraction",
             font=("Helvetica", 12, "italic"), 
             bg="#eef3f7", 
             fg="#666666"
@@ -815,11 +979,16 @@ class GDTExtractor:
         right_logo_frame = tk.Frame(self.top_frame, bg="#ffffff", borderwidth=1, relief="solid")
         right_logo_frame.grid(row=0, column=3, sticky="", padx=10, rowspan=2)
         
-        try:
-            right_img = Image.open("./assets/frit.png").resize((100, 100))
-            self.right_photo = ImageTk.PhotoImage(right_img)
-            tk.Label(right_logo_frame, image=self.right_photo, bg="#ffffff").pack()
-        except FileNotFoundError:
+        # Handle right logo loading with PIL or fallback
+        if PIL_AVAILABLE:
+            try:
+                right_img = Image.open("./assets/frit.png").resize((100, 100))
+                self.right_photo = ImageTk.PhotoImage(right_img)
+                tk.Label(right_logo_frame, image=self.right_photo, bg="#ffffff").pack()
+            except FileNotFoundError:
+                tk.Label(right_logo_frame, text="LOGO\n2", bg="#ffffff", 
+                        width=12, height=6, font=("Arial", 8)).pack()
+        else:
             tk.Label(right_logo_frame, text="LOGO\n2", bg="#ffffff", 
                     width=12, height=6, font=("Arial", 8)).pack()
 
@@ -831,7 +1000,7 @@ class GDTExtractor:
         # Buttons
         tk.Button(
             self.mid_frame, 
-            text="📤 Upload STEP File (Ctrl+O)", 
+            text="Upload STEP File (Ctrl+O)", 
             command=self.upload_and_process,
             font=("Arial", 11, "bold"), 
             bg="#4CAF50", 
@@ -842,7 +1011,7 @@ class GDTExtractor:
 
         tk.Button(
             self.mid_frame, 
-            text="💾 Save Results (Ctrl+S)", 
+            text="Save Results (Ctrl+S)", 
             command=self.save_results,
             font=("Arial", 11), 
             bg="#2196F3", 
@@ -853,7 +1022,7 @@ class GDTExtractor:
 
         tk.Button(
             self.mid_frame, 
-            text="🗑️ Clear Output", 
+            text="Clear Output", 
             command=self.clear_output,
             font=("Arial", 11), 
             bg="#FF9800", 
@@ -864,7 +1033,7 @@ class GDTExtractor:
 
         self.theme_button = tk.Button(
             self.mid_frame, 
-            text="🌙 Dark Mode", 
+            text="Dark Mode", 
             command=self.toggle_theme,
             font=("Arial", 10), 
             bg="#9E9E9E", 
@@ -886,7 +1055,7 @@ class GDTExtractor:
         # Processing info
         info_label = tk.Label(
             self.mid_frame, 
-            text="✨ Extracts: Geometric Tolerances + Dimensional Tolerances (with Datum References)", 
+            text="Extracts: Geometric Tolerances + Dimensional Tolerances (Diameter & Length) + Datums", 
             font=("Arial", 9, "italic"), 
             bg="#eef3f7", 
             fg="#008000"
@@ -923,7 +1092,7 @@ class GDTExtractor:
             "Type": 140, 
             "Value": 80, 
             "Datum": 60, 
-            "Location": 160, 
+            "Location": 140, 
             "Surface": 140, 
             "Tolerance Value": 120,
             "Upper Limit": 100, 
@@ -957,7 +1126,7 @@ class GDTExtractor:
         """Create status bar"""
         self.status_bar = tk.Label(
             self.root, 
-            text="Ready - Enhanced to extract dimensional tolerances with datum references", 
+            text="Ready - Enhanced to extract dimensional tolerances with datums", 
             relief=tk.SUNKEN, 
             anchor=tk.W,
             bg="#e9ecef",
@@ -995,14 +1164,14 @@ class GDTExtractor:
             datum_count = len([r for r in result_data if r[0] == "Datum"])
             
             filename = os.path.basename(file_path)
-            self.filename_label.config(text=f"📁 Loaded: {filename}")
-            self.status_bar.config(text=f"✅ Extracted: {geometric_count} geometric, {dimensional_count} dimensional (with datums), {datum_count} datums from {filename}")
+            self.filename_label.config(text=f"Loaded: {filename}")
+            self.status_bar.config(text=f"Extracted: {geometric_count} geometric, {dimensional_count} dimensional (with datums), {datum_count} datums from {filename}")
             
         except Exception as e:
             error_msg = f"Error reading file: {str(e)}"
             messagebox.showerror("File Error", error_msg)
             logger.error(error_msg)
-            self.status_bar.config(text="❌ Error processing file")
+            self.status_bar.config(text="Error processing file")
 
     def show_table(self, result_lines):
         """Display results in the table"""
@@ -1072,66 +1241,74 @@ class GDTExtractor:
                     writer.writerows(rows)
                     
             elif file_format == ".xlsx":
-                import openpyxl
-                from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+                try:
+                    import openpyxl
+                    from openpyxl.styles import Font, PatternFill, Alignment
+                    
+                    wb = openpyxl.Workbook()
+                    ws = wb.active
+                    ws.title = "GD&T & Dimensional Tolerances"
+                    
+                    # Define colors
+                    header_fill = PatternFill(start_color="4CAF50", end_color="4CAF50", fill_type="solid")
+                    datum_fill = PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="solid")
+                    dimensional_fill = PatternFill(start_color="E8F5E8", end_color="E8F5E8", fill_type="solid")
+                    tolerance_fill = PatternFill(start_color="E3F2FD", end_color="E3F2FD", fill_type="solid")
+                    
+                    # Add headers with formatting
+                    for col, header in enumerate(headers, 1):
+                        cell = ws.cell(row=1, column=col, value=header)
+                        cell.font = Font(bold=True, color="FFFFFF")
+                        cell.fill = header_fill
+                        cell.alignment = Alignment(horizontal="center")
+                    
+                    # Add data with enhanced formatting
+                    for row_idx, row in enumerate(rows, 2):
+                        for col_idx, value in enumerate(row, 1):
+                            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                            
+                            # Apply conditional formatting
+                            if row[0] == "Datum":
+                                cell.fill = datum_fill
+                                if col_idx == 1:  # Type column
+                                    cell.font = Font(bold=True)
+                            elif any(symbol in row[0] for symbol in ["⌀ Diameter", "↔"]):
+                                cell.fill = dimensional_fill
+                                if col_idx == 1:  # Type column
+                                    cell.font = Font(bold=True, color="2E7D32")
+                            elif col_idx in [6, 7, 8]:  # Tolerance Value, Upper Limit, Lower Limit columns
+                                if value and value != "N/A" and value != "":
+                                    cell.fill = tolerance_fill
+                    
+                    # Auto-adjust column widths
+                    for column in ws.columns:
+                        max_length = max(len(str(cell.value)) for cell in column if cell.value)
+                        ws.column_dimensions[column[0].column_letter].width = min(max_length + 2, 50)
+                    
+                    # Add summary
+                    last_row = len(rows) + 3
+                    ws.cell(row=last_row, column=1, value="SUMMARY:").font = Font(bold=True)
+                    
+                    geometric_count = len([r for r in rows if not any(symbol in r[0] for symbol in ["⌀ Diameter", "↔"]) and r[0] != "Datum"])
+                    dimensional_count = len([r for r in rows if any(symbol in r[0] for symbol in ["⌀ Diameter", "↔"])])
+                    datum_count = len([r for r in rows if r[0] == "Datum"])
+                    dimensional_with_datum_count = len([r for r in rows if any(symbol in r[0] for symbol in ["⌀ Diameter", "↔"]) and r[2] != ""])
+                    
+                    ws.cell(row=last_row+1, column=1, value=f"Geometric Tolerances: {geometric_count}")
+                    ws.cell(row=last_row+2, column=1, value=f"Dimensional Tolerances: {dimensional_count}")
+                    ws.cell(row=last_row+3, column=1, value=f"Dimensional with Datums: {dimensional_with_datum_count}")
+                    ws.cell(row=last_row+4, column=1, value=f"Datums: {datum_count}")
+                    ws.cell(row=last_row+5, column=1, value=f"Total Items: {len(rows)}")
+                    
+                    wb.save(file_path)
+                    
+                except ImportError:
+                    messagebox.showerror("Missing Dependency", 
+                                       "openpyxl is required for Excel export. Please install it with:\npip install openpyxl")
+                    return
                 
-                wb = openpyxl.Workbook()
-                ws = wb.active
-                ws.title = "GD&T & Dimensional Tolerances"
-                
-                # Define colors
-                header_fill = PatternFill(start_color="4CAF50", end_color="4CAF50", fill_type="solid")
-                datum_fill = PatternFill(start_color="FFF3CD", end_color="FFF3CD", fill_type="solid")
-                dimensional_fill = PatternFill(start_color="E8F5E8", end_color="E8F5E8", fill_type="solid")
-                tolerance_fill = PatternFill(start_color="E3F2FD", end_color="E3F2FD", fill_type="solid")
-                
-                # Add headers with formatting
-                for col, header in enumerate(headers, 1):
-                    cell = ws.cell(row=1, column=col, value=header)
-                    cell.font = Font(bold=True, color="FFFFFF")
-                    cell.fill = header_fill
-                    cell.alignment = Alignment(horizontal="center")
-                
-                # Add data with enhanced formatting
-                for row_idx, row in enumerate(rows, 2):
-                    for col_idx, value in enumerate(row, 1):
-                        cell = ws.cell(row=row_idx, column=col_idx, value=value)
-                        
-                        # Apply conditional formatting
-                        if row[0] == "Datum":
-                            cell.fill = datum_fill
-                            if col_idx == 1:  # Type column
-                                cell.font = Font(bold=True)
-                        elif any(symbol in row[0] for symbol in ["⌀ Diameter", "↔"]):
-                            cell.fill = dimensional_fill
-                            if col_idx == 1:  # Type column
-                                cell.font = Font(bold=True, color="2E7D32")
-                        elif col_idx in [6, 7, 8]:  # Tolerance Value, Upper Limit, Lower Limit columns
-                            if value and value != "N/A" and value != "":
-                                cell.fill = tolerance_fill
-                
-                # Auto-adjust column widths
-                for column in ws.columns:
-                    max_length = max(len(str(cell.value)) for cell in column if cell.value)
-                    ws.column_dimensions[column[0].column_letter].width = min(max_length + 2, 50)
-                
-                # Add summary
-                last_row = len(rows) + 3
-                ws.cell(row=last_row, column=1, value="SUMMARY:").font = Font(bold=True)
-                
-                geometric_count = len([r for r in rows if not any(symbol in r[0] for symbol in ["⌀ Diameter", "↔"]) and r[0] != "Datum"])
-                dimensional_count = len([r for r in rows if any(symbol in r[0] for symbol in ["⌀ Diameter", "↔"])])
-                datum_count = len([r for r in rows if r[0] == "Datum"])
-                
-                ws.cell(row=last_row+1, column=1, value=f"Geometric Tolerances: {geometric_count}")
-                ws.cell(row=last_row+2, column=1, value=f"Dimensional Tolerances: {dimensional_count}")
-                ws.cell(row=last_row+3, column=1, value=f"Datums: {datum_count}")
-                ws.cell(row=last_row+4, column=1, value=f"Total Items: {len(rows)}")
-                
-                wb.save(file_path)
-                
-            self.status_bar.config(text=f"✅ Results saved to {file_format.upper()} format")
-            messagebox.showinfo("Success", f"Results saved as {file_format.upper()}!\n\nIncludes geometric tolerances, dimensional tolerances with datum references, and tolerance limits.")
+            self.status_bar.config(text=f"Results saved to {file_format.upper()} format")
+            messagebox.showinfo("Success", f"Results saved as {file_format.upper()}!\n\nIncludes geometric and dimensional tolerances with datum references.")
             
         except Exception as e:
             error_msg = f"Failed to save file: {str(e)}"
@@ -1144,7 +1321,7 @@ class GDTExtractor:
             for row in self.output_table.get_children():
                 self.output_table.delete(row)
         self.filename_label.config(text="No file loaded")
-        self.status_bar.config(text="Ready - Enhanced to extract dimensional tolerances with datum references")
+        self.status_bar.config(text="Ready - Enhanced to extract dimensional tolerances with datums")
 
     def toggle_theme(self):
         """Toggle between dark and light themes"""
@@ -1154,13 +1331,13 @@ class GDTExtractor:
         if self.dark_mode:
             bg_color, fg_color = "#2c2f33", "#f0f0f0"
             button_bg, button_fg = "#7289da", "white"
-            theme_text = "☀️ Light Mode"
+            theme_text = "Light Mode"
         else:
             bg_color, fg_color = "#eef3f7", "#003366"
             button_bg, button_fg = "#9E9E9E", "black" 
-            theme_text = "🌙 Dark Mode"
+            theme_text = "Dark Mode"
 
-        # Apply theme to title frame
+        # Apply theme to widgets
         widgets_to_update = [
             (self.root, {"bg": bg_color}),
             (self.top_frame, {"bg": bg_color}),
@@ -1181,7 +1358,11 @@ class GDTExtractor:
             pass
         
         for widget, config in widgets_to_update:
-            widget.configure(**config)
+            try:
+                widget.configure(**config)
+            except:
+                pass
+
 
 def main():
     """Main application entry point"""
@@ -1191,6 +1372,7 @@ def main():
     except Exception as e:
         logging.error(f"Application failed to start: {str(e)}")
         messagebox.showerror("Startup Error", f"Failed to start application:\n{str(e)}")
+
 
 if __name__ == "__main__":
     main()
